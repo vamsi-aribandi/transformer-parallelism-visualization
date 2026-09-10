@@ -20,10 +20,12 @@ Collectives are **derived, not hand-animated**, so future multi-axis combos (FSD
 
 ## Visual language
 
-- Weights = blue hatched rects; activations = amber fake-3D slab decks (B slabs of T×D; sharding: B→slab subset, T→horizontal band, D→vertical slice, always with a dashed ghost outline of the full extent); K/V = teal; partial sums = translucent + dashed + `{U_X}` in the label.
+- **Model canvas (v2)**: model depth is the x-axis — stations `In → L1·Attn → L1·MLP → L2·Attn → L2·MLP → Out`; devices are horizontal lanes stacked vertically (`src/tpviz/mobjects/canvas.py`). The activation deck physically travels left→right; collectives fly **vertically** between lanes at the current station's x. Weight fixtures sit on each lane's upper track; decks travel the lower track. Weight notation appears once per station in a header row; a single shared "tracker" label under the canvas follows the current activation. PP shares the canvas (stage lanes own their layer's stations, others dimmed; microbatches hop diagonally at the boundary; Gantt inset below). Backprop later = same canvas, right→left.
+- Weights = blue hatched rects; activations = amber fake-3D slab decks (B slabs of T×D; sharding: B→owned slab within a ghost stack, T→horizontal band, D→vertical slice; the solid part sits at THIS device's offset inside a dashed ghost outline, so lanes visibly hold different slices); K/V = teal; partial sums = translucent + dashed + `{U_X}` in the label.
 - All LaTeX built in `src/tpviz/notation.py` (single choke point; brace escaping, subscripts).
 - Persistent bottom **equation strip** shows every op in book notation; comm counter top-right; per-layer collective summary card at the end.
 - 2D `Scene` only (fake-3D decks) — never `ThreeDScene`.
+- Geometry debug harness: `CanvasDebug` / `CanvasDebugPP` scenes in `scenes/gallery.py` (anchor dots on a static canvas).
 
 ## Environment facts (non-obvious)
 
@@ -31,9 +33,10 @@ Collectives are **derived, not hand-animated**, so future multi-axis combos (FSD
 - No system ffmpeg needed (Manim ≥0.19 encodes via PyAV). `scripts/extract_frames.py` uses PyAV for the QA loop: `make lq` → `make frames` → inspect `qa/<scene>/*.png`.
 - Manim deep-copies mobjects: anything they hold must be picklable (LTensor uses a plain dict, not MappingProxyType).
 - Never cache scene-unit geometry at construction (boxes get arranged/shifted after); compute anchors live. Don't delete `media/Tex` while a render runs.
+- **Render with `--disable_caching`** (Makefile does): Manim's animation-hashing on the canvas's many submobjects made a 1-minute render take 13 minutes.
 
 ## Known gaps / next work
 
-- **v2 in progress**: (1) per-device shard offsets — every device currently draws slice 0; (2) horizontal model canvas — model depth becomes the x-axis (stations `In → L1·Attn → L1·MLP → L2·Attn → L2·MLP → Out`), devices become stacked lanes, collectives fly vertically; PP shares the canvas (stages own station ranges); sets up backprop (right→left) later.
-- Multi-axis combos need: multi-lane/grid mesh layout, PP composition in the scheduler, per-axis coloring.
+- Multi-axis combos need: lanes for multi-axis meshes (lane per device with axis-coord grouping/coloring), PP composition in the scheduler, per-axis flight styling. `axis_coord()` in tensor_mobject.py already unravels multi-axis device indices.
+- Backprop visualization: the canvas is ready (right→left sweep); needs backward-pass steps in `core/model.py`.
 - Ignored by design: residual stream, LayerNorm, GQA/attention tricks, MoE capacity/load-balancing (called out in the EP video).

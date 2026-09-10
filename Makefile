@@ -4,7 +4,7 @@ SCENES = dp:DPScene fsdp:FSDPScene tp:TPScene cp:CPScene pp:PPScene ep:EPScene
 
 # usage: make lq S=dp C=DPScene
 lq:
-	uv run manim render -ql src/tpviz/scenes/$(S).py $(C)
+	uv run manim render -ql --disable_caching src/tpviz/scenes/$(S).py $(C)
 
 snap:
 	uv run manim render -sqh src/tpviz/scenes/$(S).py $(C)
@@ -23,7 +23,7 @@ hq-all:
 	mkdir -p renders
 	for s in $(SCENES); do \
 		short=$${s%%:*}; cls=$${s##*:}; \
-		uv run manim render -qh src/tpviz/scenes/$$short.py $$cls || exit 1; \
+		uv run manim render -qh --disable_caching src/tpviz/scenes/$$short.py $$cls || exit 1; \
 		cp media/videos/$$short/1080p60/$$cls.mp4 renders/$$short.mp4; \
 	done
 

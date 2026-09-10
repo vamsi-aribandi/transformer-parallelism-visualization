@@ -45,4 +45,16 @@ Linear, detailed log of work. Newest entries at the bottom. See [STATE.md](STATE
 
 - User feedback: (1) sharded tensors all highlight slice 0 on every device — must show device i's slice; (2) model depth must be laid out horizontally (input flows left→right through stations; devices become stacked lanes; shared canvas for PP; sets up backprop later).
 - Added STATE.md + this LOG.md.
-- (entries below appended as v2 work lands)
+
+**Per-device shard offsets**
+- `TensorVis` gained `device:`; `_shard_fraction` now returns the device's offset (via `axis_coord`, which unravels flat device indices over multi-axis meshes for later). Solid shard anchored at its offset inside the ghost. B-sharded decks draw a ghost slab stack with the owned slab solid at position i. Gallery gained a device-progression row (same tensor, devices 0..3). Verified: FSDP weight bands march down/right per device; TP ReduceScatter slices land at different offsets per lane.
+
+**Horizontal model canvas**
+- New `mobjects/canvas.py`: `ModelCanvas` = lanes (devices, y) × stations (model depth, x): `In` dock, `L{i}·Attn`, `L{i}·MLP/MoE` blocks (2.9 wide, anchor waypoints entry/w1/core/w2/exit as width-fractions), `Out` dock. Header band shows station titles + weight notation once per station (swapped live during FSDP jit gathers). All geometry resolved live from an invisible frame rect. Two tracks per lane: weight fixtures above, traveling activation below. Debug scenes `CanvasDebug`/`CanvasDebugPP` render anchor dots for geometry sign-off.
+- `scenes/base.py` rewritten: station highlight + decks slide right on phase change; matmul products prebuilt at the next waypoint so the ReplacementTransform IS the rightward drift; single shared tracker label (clamped to frame) replaces per-lane tensor labels; collectives unchanged — vertical flights fall out of stacked lanes.
+- `scenes/pp.py`: 2 stage lanes over the same stations; non-owned stations dimmed; microbatch queue/done stacks in the In/Out docks; tick-grouped simultaneous traversals; diagonal P2P hop across the stage boundary; Gantt below lanes. Bug found via frames: `key_of is self._attn_key` compared fresh bound methods (always False) so Gantt never filled — replaced with a plain flag.
+- `scenes/ep.py`: token grids at the MoE station's dispatch column; vertical crossfly sort-by-hue; expert compute at core via base handlers; combine column explodes and flies tokens home. `E{i}` chips on the weight track.
+- Fixes from frame QA: station-highlight got BRIGHTER during summary dim (set_opacity raised its 0.06 fill → FadeOut instead); tracker clipped at right edge (x clamp); header-title dict `.get` evaluated its fallback eagerly for dock stations (KeyError on phase "").
+- **Perf**: renders went 13 min → ~1 min with `--disable_caching` — Manim's animation-hash on the canvas's many submobjects was the bottleneck, not rendering. Makefile targets updated.
+- Deleted `mobjects/device_grid.py` (gallery no longer uses DeviceBox). Engine tests untouched and green throughout.
+- Re-rendered all six at 1080p60 into `renders/`.
