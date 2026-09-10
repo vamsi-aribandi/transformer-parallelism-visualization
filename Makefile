@@ -14,7 +14,7 @@ gallery:
 
 # extract a frame every 3s from the last -ql render for visual QA
 frames:
-	uv run python scripts_extract_frames.py media/videos/$(S)/480p15/$(C).mp4 qa/$(S) 3.0
+	uv run python scripts/extract_frames.py media/videos/$(S)/480p15/$(C).mp4 qa/$(S) 3.0
 
 test:
 	uv run pytest -q

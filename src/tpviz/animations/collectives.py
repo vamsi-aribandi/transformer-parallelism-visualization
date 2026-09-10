@@ -21,10 +21,19 @@ from manim import (
 from tpviz import style
 
 
-def _flight(src: Mobject, dest_center, arc: float = 0.55) -> tuple[Mobject, AnimationGroup]:
-    c = src.copy()
+def _body(mobj: Mobject) -> Mobject:
+    """The visual tensor inside a VGroup(vis, label) — labels don't fly."""
+    if isinstance(mobj, VGroup) and len(mobj) > 0:
+        return mobj[0]
+    return mobj
+
+
+def _flight(
+    src: Mobject, dest_center, arc: float = 0.55, shrink: float = 0.85
+) -> tuple[Mobject, AnimationGroup]:
+    c = _body(src).copy()
     c.set_z_index(style.Z_FLYING)
-    anim = c.animate(path_arc=arc).move_to(dest_center).scale(0.85)
+    anim = c.animate(path_arc=arc).move_to(dest_center).scale(shrink)
     return c, anim
 
 
@@ -73,8 +82,9 @@ def animate_exchange_resolve(
         for i, partial in enumerate(partials):
             if i == j:
                 continue
-            c, anim = _flight(partial, dest, arc=0.35)
-            c.set_opacity(0.35)
+            c, anim = _flight(partial, dest, arc=0.35, shrink=0.3)
+            c.set_opacity(0.3)
+            c.scale(0.6)
             copies.append(c)
             flights.append(anim)
     scene.add(*copies)

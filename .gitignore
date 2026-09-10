@@ -6,3 +6,4 @@ renders/
 .pytest_cache/
 *.egg-info/
 .DS_Store
+qa/

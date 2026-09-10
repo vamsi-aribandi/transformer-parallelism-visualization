@@ -385,6 +385,9 @@ class ForwardPassScene(Scene):
         self.wait(self.rt(1.6))
 
     # ------------------------------------------------------------- summary
+    def summary_row(self, op: str, n: int) -> str:
+        return f"{op}  ×{n}   ({n // self.cfg.n_layers} per layer)"
+
     def summary(self):
         steps = forward_steps(self.cfg)
         counts = count_collectives(steps)
@@ -398,8 +401,7 @@ class ForwardPassScene(Scene):
         title = Text("Forward-pass communication", font_size=32, color=style.TEXT_COLOR, weight="BOLD")
         if counts:
             rows = [
-                caption_text(f"{op}  ×{n}   ({n // self.cfg.n_layers} per layer)",
-                             font_size=26, color=style.COMM_COLOR)
+                caption_text(self.summary_row(op, n), font_size=26, color=style.COMM_COLOR)
                 for op, n in sorted(counts.items())
             ]
         else:
