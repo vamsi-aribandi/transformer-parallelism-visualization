@@ -51,6 +51,17 @@ class Gallery(Scene):
         ]
         row2 = VGroup(*weights).arrange(RIGHT, buff=0.8, aligned_edge=UP)
 
+        # per-device offsets: the SAME tensor on devices 0..3 shows different slices
+        w_shard = LTensor("W_in", ("D", "F"), {"D": "X"}, kind="weight")
+        t_shard = LTensor("In", ("B", "T", "D"), {"T": "X"})
+        b_shard = LTensor("In", ("B", "T", "D"), {"B": "X"})
+        offsets = (
+            [_cell(WeightRect(w_shard, mesh, device=i), f"dev {i}") for i in range(4)]
+            + [_cell(ActivationDeck(t_shard, mesh, device=i), f"T dev {i}") for i in range(4)]
+            + [_cell(ActivationDeck(b_shard, mesh, device=i), f"B dev {i}") for i in range(4)]
+        )
+        row_offsets = VGroup(*offsets).arrange(RIGHT, buff=0.55, aligned_edge=UP)
+
         device = DeviceBox(1, width=2.6, height=3.0)
         w = WeightRect(LTensor("W_in", ("D", "F"), {"D": "X"}, kind="weight"), mesh)
         wl = w.make_label(font_size=18)
@@ -60,7 +71,7 @@ class Gallery(Scene):
         device.fit_into(VGroup(a, al), "acts", max_scale=0.9)
         row3 = VGroup(_cell_title("DeviceBox", device))
 
-        sheet = VGroup(row1, row2, row3).arrange(DOWN, buff=0.5, aligned_edge=LEFT)
+        sheet = VGroup(row1, row2, row_offsets, row3).arrange(DOWN, buff=0.5, aligned_edge=LEFT)
         sheet.scale_to_fit_width(13.4)
         if sheet.height > 6.2:
             sheet.scale_to_fit_height(6.2)

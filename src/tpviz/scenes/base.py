@@ -151,7 +151,7 @@ class ForwardPassScene(Scene):
             cells = []
             for name in weight_names:
                 t = make_weight(cfg, name)
-                vis = WeightRect(t, cfg.mesh)
+                vis = WeightRect(t, cfg.mesh, device=i)
                 label = vis.make_label(font_size=30)
                 cells.append(VGroup(vis, label))
             grid = VGroup(*cells).arrange_in_grid(rows=2, cols=2, buff=(0.55, 0.35))
@@ -167,8 +167,8 @@ class ForwardPassScene(Scene):
         full_group.move_to(UP * 2.2)
 
         shard_groups = []
-        for box in self.grid.boxes:
-            vis = ActivationDeck(t_in, cfg.mesh)
+        for i, box in enumerate(self.grid.boxes):
+            vis = ActivationDeck(t_in, cfg.mesh, device=i)
             label = vis.make_label(font_size=30)
             g = VGroup(vis, label)
             box.fit_into(g, "acts", attach=False)
@@ -198,7 +198,7 @@ class ForwardPassScene(Scene):
 
     # ------------------------------------------------------------- utilities
     def build_act_vis(self, t: LTensor, device: int, *, like: VGroup | None = None) -> VGroup:
-        vis = ActivationDeck(t, self.cfg.mesh)
+        vis = ActivationDeck(t, self.cfg.mesh, device=device)
         label = vis.make_label(font_size=30)
         g = VGroup(vis, label)
         if like is not None:
@@ -279,7 +279,7 @@ class ForwardPassScene(Scene):
         for i, box in enumerate(self.grid.boxes):
             minis = []
             for t in (step.q, step.k, step.v):
-                vis = ActivationDeck(t, self.cfg.mesh, scale=0.7)
+                vis = ActivationDeck(t, self.cfg.mesh, device=i, scale=0.7)
                 label = vis.make_label(font_size=34)
                 minis.append(VGroup(vis, label))
             row = VGroup(*minis).arrange(RIGHT, buff=0.3)
@@ -326,7 +326,7 @@ class ForwardPassScene(Scene):
             self.pending_restore[step.src.name] = [s.copy() for s in shards]
             results = []
             for i, s in enumerate(shards):
-                vis = WeightRect(step.out, self.cfg.mesh)
+                vis = WeightRect(step.out, self.cfg.mesh, device=i)
                 label = vis.make_label(font_size=30)
                 g = VGroup(vis, label)
                 sc = min(s.width / g.width, s.height / g.height)
