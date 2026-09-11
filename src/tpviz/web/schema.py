@@ -30,6 +30,31 @@ from tpviz.web.texatlas import TexAtlas
 CS = 100
 STRIP_Z = style.Z_STRIP  # recorded equation-strip objects are replaced by HTML
 
+# baked hexes -> theme tokens the client resolves to CSS variables
+HEX2TOK: dict[str, str] = {}
+for _hex, _tok in [
+    (style.TEXT_COLOR, "text"), (style.MUTED_TEXT, "muted"), (style.ACCENT, "accent"),
+    (style.COMM_COLOR, "comm"), (style.GOOD_COLOR, "good"),
+    (style.ACT_FILL, "act"), (style.ACT_STROKE, "actS"),
+    (style.WEIGHT_FILL, "wt"), (style.WEIGHT_STROKE, "wtS"),
+    (style.KV_FILL, "kv"), (style.KV_STROKE, "kvS"),
+    (style.GRAD_FILL, "grad"), (style.GRAD_STROKE, "gradS"),
+    (style.DEVICE_BOX_FILL, "boxFill"), (style.DEVICE_BOX_STROKE, "boxStroke"),
+    ("#151b24", "surf"), ("#1a2029", "surf2"), ("#243041", "surf2"),
+    ("#e5e7eb", "text"),
+]:
+    HEX2TOK[_hex.upper()] = _tok
+for _i, _hex in enumerate(style.DEVICE_HUES[:4]):
+    HEX2TOK[_hex.upper()] = f"dev{_i}"
+for _i, _hex in enumerate(style.EXPERT_HUES):
+    HEX2TOK[_hex.upper()] = f"exp{_i}"
+
+
+def _tok(color):
+    if isinstance(color, str):
+        return HEX2TOK.get(color.upper(), color)
+    return color
+
 
 def _q(v: float) -> int:
     return round(v * CS)
@@ -111,6 +136,9 @@ class DocumentBuilder:
                 entry["tensor"] = tensor
             if "tex" in spec:
                 entry["eq"] = self.atlas.add(spec.pop("tex"))
+            for k in ("color", "fill", "stroke"):
+                if k in spec:
+                    spec[k] = _tok(spec[k])
             entry.update(spec)
             objects.append(entry)
 
@@ -185,12 +213,29 @@ class DocumentBuilder:
             entries.append(e)
             prev_end = seg_step.t1
 
+        save_objs = sorted({
+            i for e in entries if e.get("save") for i in e["in"]
+        })
+        fwd_tex = {}
+        for i, seg_step in enumerate(rec.steps):
+            st = seg_step.step
+            if not st.backward and hasattr(st, "tex"):
+                fwd_tex.setdefault(st.tex(), i)
+        for i, seg_step in enumerate(rec.steps):
+            st = seg_step.step
+            if st.backward and st.note_tex:
+                for tex, k in fwd_tex.items():
+                    if st.note_tex.endswith(tex):
+                        entries[i]["fwdStep"] = k
+                        break
+
         mm_counts = count_matmuls(steps_semantic)
         self.timelines[name] = {
             "objects": objects,
             "base": base,
             "baseIn": base_born,
             "steps": entries,
+            "saveObjs": save_objs,
             "summary": {"coll": count_collectives(steps_semantic), "mm": mm_counts},
         }
 
@@ -218,9 +263,8 @@ def validate(doc: dict) -> list[str]:
             for row in st["d"]:
                 if not (0 <= row[0] < n):
                     errs.append(f"{name}: step {si} diff references object {row[0]}")
-            for k in ("eq", "note"):
-                if k in st and st[k] not in doc["eq"]:
-                    errs.append(f"{name}: step {si} missing eq {st[k]}")
+            if "eqh" not in st:
+                errs.append(f"{name}: step {si} missing eqh")
             seen.update(st["in"])
         for o in tl["objects"]:
             for k in ("eq", "tex"):

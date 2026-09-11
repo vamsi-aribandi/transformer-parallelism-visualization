@@ -7,6 +7,7 @@ from math import prod
 
 from tpviz.core.steps import CollectiveStep, MatMulStep, P2PSendStep, SaveActivationStep
 from tpviz.scenes.base import default_caption
+from tpviz.web.texthtml import tex_to_html
 
 
 @dataclass(frozen=True)
@@ -86,11 +87,14 @@ def step_entry(seg, atlas) -> dict:
     if step.microbatch is not None:
         entry["mb"] = step.microbatch
     if hasattr(step, "tex"):
-        entry["eq"] = atlas.add(step.tex())
+        entry["eqh"] = tex_to_html(step.tex())
     elif isinstance(step, SaveActivationStep):
-        entry["eq"] = atlas.add(rf"\text{{save}}\ {step.t.tex()}")
+        entry["eqh"] = tex_to_html(step.t.tex())
+        entry["save"] = True
+    else:
+        entry["eqh"] = entry["kind"]
     if step.note_tex:
-        entry["note"] = atlas.add(step.note_tex)
+        entry["noteh"] = tex_to_html(step.note_tex)
     entry["comm"] = isinstance(step, (CollectiveStep, P2PSendStep))
     entry["mm"] = isinstance(step, MatMulStep)
     return entry

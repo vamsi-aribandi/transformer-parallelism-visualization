@@ -45,10 +45,12 @@
     The step bar under each figure is <strong>discrete</strong> — every segment is one
     semantic operation (a matmul, a collective, a save). Click a segment to jump to the
     state <em>after</em> that operation; press play to watch the operations animate in
-    order. The equation under the canvas is the current operation in scaling-book
-    notation; during the backward pass a second line cites the forward equation it is
-    the derivative of. Each strategy opens with its forward pass; the backward pass —
-    twice the compute, and the reason activations are saved — unfolds when you're ready.
+    order. The program beside the canvas is the whole pass as a list of operations in
+    scaling-book notation — it follows
+    along as you step, and clicking any line jumps straight there. Each figure opens in
+    forward-only mode; switch to <em>+ Backward</em> to watch the full training step,
+    where activations get saved beneath the weights that will need them, and every
+    backward operation cites the forward operation it differentiates.
   </p>
 
   <h2 id="tp">Tensor parallelism</h2>
@@ -77,8 +79,9 @@
   <figure class="tpv-outer">
     <tpviz-figure strategy="tp"></tpviz-figure>
     <figcaption>
-      Tensor parallelism over <code>Mesh({'Y': 4})</code>: a 2-layer transformer,
-      forward pass, with the backward pass collapsible below.
+      Tensor parallelism over <code>Mesh({'Y': 4})</code>: a 2-layer transformer.
+      Step through the forward pass, or switch to <em>+ Backward</em> for the full
+      training step.
     </figcaption>
   </figure>
 

@@ -73,11 +73,13 @@ def build_document(only: list[str] | None = None) -> dict:
         semantic = train_steps(cfg) if is_train else forward_steps(cfg)
         builder.add_timeline(name, rec, semantic)
         short = name.rsplit("_", 1)[0]
+        from tpviz.web.texthtml import tex_to_html
+
         meta["strategies"][short] = {
             "label": STRATEGY_LABEL[short],
             "name": cfg.name,
             "tagline": cfg.tagline,
-            "mesh": builder.atlas.add(cfg.mesh.tex()),
+            "meshh": tex_to_html(cfg.mesh.tex()),
         }
         meta["modes"][name] = "train" if is_train else "fwd"
     return builder.build(meta)

@@ -55,7 +55,7 @@ def test_summary_and_duality_notes(doc):
         if s["bwd"] and s["kind"] in ("AllGather", "ReduceScatter")
     ]
     assert len(bwd_colls) == 8
-    assert all("note" in s for s in bwd_colls)
+    assert all("noteh" in s for s in bwd_colls)
     assert tl["steps"][-1]["coll"] == sum(tl["summary"]["coll"].values())
     assert tl["steps"][-1]["mm"] == sum(tl["summary"]["mm"].values())
 
