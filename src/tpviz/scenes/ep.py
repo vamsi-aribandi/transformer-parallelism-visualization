@@ -97,7 +97,10 @@ class MoETokenMixin:
         self.wait(self.rt(0.4))
 
     def handle_AllToAllStep(self, step: AllToAllStep):
-        self.play(self.strip.show(step.tex(), color=style.COMM_COLOR), run_time=self.rt(0.45))
+        self.play(
+            self.strip.show(step.tex(), color=style.COMM_COLOR, note=step.note_tex),
+            run_time=self.rt(0.45),
+        )
         key = self.canvas.station_key(step.layer, step.phase)
         self._moe_key = key
         if not step.backward:

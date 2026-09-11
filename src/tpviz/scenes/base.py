@@ -55,7 +55,7 @@ from tpviz.mobjects.tensor_mobject import ActivationDeck, WeightRect
 
 PHASE_LABEL = {"attn": "Attention", "mlp": "MLP", "moe": "MoE MLP", "pipeline": "Pipeline"}
 LAYER2_SPEED = 0.45
-CAPTION_Y = 3.1
+CAPTION_Y = 2.95  # below the header/badge block, above the station titles
 TRACKER_Y = -2.87
 
 # which weights live at each phase's fixture slots, and where a matmul's
@@ -244,7 +244,7 @@ class ForwardPassScene(Scene):
             g.move_to(like.get_center())
         elif at is not None:
             lane_h = self.canvas.lanes[lane].rect.height
-            s = min(1.0, 0.95 / max(g.width, 1e-6), lane_h * 0.52 / max(g.height, 1e-6))
+            s = min(1.0, 0.95 / max(g.width, 1e-6), lane_h * 0.46 / max(g.height, 1e-6))
             g.scale(s)
             g.move_to(at)
         return g
@@ -383,7 +383,7 @@ class ForwardPassScene(Scene):
                 minis.append(VGroup(vis, chip))
             row = VGroup(*minis).arrange(RIGHT, buff=0.14, aligned_edge=UP)
             lane_h = self.canvas.lanes[i].rect.height
-            s = min(1.0, 1.5 / max(row.width, 1e-6), lane_h * 0.56 / max(row.height, 1e-6))
+            s = min(1.0, 1.5 / max(row.width, 1e-6), lane_h * 0.50 / max(row.height, 1e-6))
             row.scale(s)
             row.move_to(self.canvas.anchor(key, "core", i))
             for name, m in zip(("Q", "K", "V"), minis):
@@ -428,7 +428,8 @@ class ForwardPassScene(Scene):
     def handle_AllGatherStep(self, step: AllGatherStep):
         key = self.canvas.station_key(step.layer, step.phase)
         self.play(
-            self.strip.show(step.tex(), color=style.COMM_COLOR), run_time=self.rt(0.45)
+            self.strip.show(step.tex(), color=style.COMM_COLOR, note=step.note_tex),
+            run_time=self.rt(0.45),
         )
         if step.src.kind == "weight":
             slot = 0 if step.src.name in ("W_qkv", "W_in") else 1
@@ -469,7 +470,10 @@ class ForwardPassScene(Scene):
 
     def _exchange(self, step):
         key = self.canvas.station_key(step.layer, step.phase)
-        self.play(self.strip.show(step.tex(), color=style.COMM_COLOR), run_time=self.rt(0.45))
+        self.play(
+            self.strip.show(step.tex(), color=style.COMM_COLOR, note=step.note_tex),
+            run_time=self.rt(0.45),
+        )
         partials = self.acts.pop(step.src.name)
         if step.backward:
             # gradients resolve in place; leftward motion comes from the flow itself

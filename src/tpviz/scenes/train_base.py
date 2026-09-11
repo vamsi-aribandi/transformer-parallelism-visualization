@@ -151,7 +151,13 @@ class TrainScene(ForwardPassScene):
     def build_tensor_vis(self, t: LTensor, lane: int, *, at=None, like=None) -> VGroup:
         if t.name.startswith("dW"):
             vis = WeightRect(t, self.cfg.mesh, device=lane, scale=FIXTURE_SCALE * 0.95)
-            g = VGroup(vis)
+            # name chip ON the rect: no free vertical space around the weight track
+            chip = caption_text(t.name, font_size=11, color=style.TEXT_COLOR)
+            if chip.width > vis.width * 1.15:
+                chip.scale(vis.width * 1.15 / chip.width)
+            chip.move_to(vis.get_center())
+            chip.set_z_index(style.Z_LABEL)
+            g = VGroup(vis, chip)
             if like is not None:
                 s = min(1.0, like.width / max(g.width, 1e-6), like.height / max(g.height, 1e-6))
                 g.scale(s)
@@ -166,11 +172,11 @@ class TrainScene(ForwardPassScene):
         key = self.canvas.station_key(step.layer, step.phase)
         minis = []
         for i in range(self.n_lanes()):
-            vis = ActivationDeck(step.t, self.cfg.mesh, device=i, scale=0.16)
-            if vis.width > 0.30:
-                vis.scale(0.30 / vis.width)
+            vis = ActivationDeck(step.t, self.cfg.mesh, device=i, scale=0.14)
+            if vis.width > 0.24:
+                vis.scale(0.24 / vis.width)
             vis.set_opacity(style.SAVED_OPACITY)
-            chip = caption_text(step.t.name, font_size=12, color=style.MUTED_TEXT)
+            chip = caption_text(step.t.name, font_size=11, color=style.MUTED_TEXT)
             g = VGroup(vis, chip.next_to(vis, DOWN, buff=0.03))
             g.move_to(self.canvas.stash_slot(key, i, step.anchor, step.spread))
             minis.append(g)
@@ -240,13 +246,10 @@ class TrainScene(ForwardPassScene):
         w_name = step.out.name[1:]  # dW_out -> W_out
         slot = 0 if w_name in ("W_qkv", "W_in") else 1
         stash = self.stash.get((key, step.a.name), [])
-        outs = []
-        for i in range(self.n_lanes()):
-            g = self.build_tensor_vis(step.out, i, at=self.canvas.grad_anchor(key, slot, i))
-            chip = caption_text(step.out.name, font_size=13, color=style.GRAD_STROKE)
-            chip.next_to(g, DOWN, buff=0.03)
-            g.add(chip)
-            outs.append(g)
+        outs = [
+            self.build_tensor_vis(step.out, i, at=self.canvas.grad_anchor(key, slot, i))
+            for i in range(self.n_lanes())
+        ]
         for o in outs:
             o.set_z_index(style.Z_TENSOR - 1)
         self.play(
@@ -276,7 +279,7 @@ class TrainScene(ForwardPassScene):
                 minis.append(VGroup(vis, chip))
             row = VGroup(*minis).arrange(np.array([1.0, 0.0, 0.0]), buff=0.14, aligned_edge=UP)
             lane_h = self.canvas.lanes[i].rect.height
-            s = min(1.0, 1.5 / max(row.width, 1e-6), lane_h * 0.56 / max(row.height, 1e-6))
+            s = min(1.0, 1.5 / max(row.width, 1e-6), lane_h * 0.50 / max(row.height, 1e-6))
             row.scale(s)
             row.move_to(self.canvas.anchor(key, "core", i))
             for t, m in zip((step.dq, step.dk, step.dv), minis):

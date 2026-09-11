@@ -55,6 +55,7 @@ class LayerRecord:
     out: LTensor | None = None  # the layer's block output
     fwd_mm: dict[str, MatMulStep] = field(default_factory=dict)  # weight name -> fwd matmul
     fwd_attn: AttentionCoreStep | None = None
+    fwd_coll: list[Step] = field(default_factory=list)  # this layer's forward collectives
 
 
 def annotate_forward(cfg: StrategyConfig) -> tuple[list[Step], dict[int, LayerRecord]]:
@@ -74,6 +75,8 @@ def annotate_forward(cfg: StrategyConfig) -> tuple[list[Step], dict[int, LayerRe
     for step in forward_steps(cfg):
         steps.append(step)
         rec = recs.get(step.layer)
+        if isinstance(step, (AllGatherStep, ReduceScatterStep, AllToAllStep)) and rec is not None:
+            rec.fwd_coll.append(step)
         if isinstance(step, MatMulStep) and step.b.kind == "weight":
             anchor = "slot0" if step.b.name in ("W_qkv", "W_in") else "slot1"
             steps.append(save(step.a, step.layer, step.phase, anchor))
@@ -111,7 +114,73 @@ def _tag_note(steps: list[Step], rec: LayerRecord, weight_name: str) -> None:
         return
     for s in steps:
         if isinstance(s, MatMulStep):
-            s.note_tex = fwd.tex()
+            s.note_tex = FROM_FWD + fwd.tex()
+
+
+FROM_FWD = r"\text{from forward:}\quad "
+DUAL_FWD = r"\text{dual of forward's}\quad "
+
+
+def _tag_collective_notes(steps: list[Step], rec: LayerRecord, cfg: StrategyConfig) -> None:
+    """Backward collectives cite their forward counterparts: an AllGather is
+    the derivative of a ReduceScatter and vice versa; a data-parallel gradient
+    AllReduce exists because the forward replicated the weight."""
+    from tpviz.core.steps import AllReduceStep
+
+    def find(kind, *, axis, phase, dim=None, base=None):
+        for f in rec.fwd_coll:
+            if not isinstance(f, kind) or f.axis != axis or f.phase != phase:
+                continue
+            if kind is AllGatherStep and dim is not None and f.dim != dim:
+                continue
+            if kind is ReduceScatterStep and dim is not None and f.scatter_dim != dim:
+                continue
+            if base is not None and f.src.name != base:
+                continue
+            return f
+        return None
+
+    for st in steps:
+        if st.note_tex is not None or not isinstance(
+            st, (AllGatherStep, ReduceScatterStep, AllReduceStep, AllToAllStep)
+        ):
+            continue
+        if isinstance(st, AllGatherStep) and st.src.kind == "weight":
+            fwd = find(AllGatherStep, axis=st.axis, phase=st.phase, dim=st.dim,
+                       base=st.src.name)
+            if fwd is not None:
+                st.note_tex = r"\text{same gather as forward (weights re-gathered):}\quad " + fwd.tex()
+        elif isinstance(st, AllGatherStep):
+            fwd = find(ReduceScatterStep, axis=st.axis, phase=st.phase, dim=st.dim)
+            if fwd is not None:
+                st.note_tex = DUAL_FWD + fwd.tex()
+        elif isinstance(st, ReduceScatterStep):
+            if st.src.name.startswith("dW"):
+                w = make_weight(cfg, st.src.name[1:])
+                st.note_tex = (
+                    rf"\text{{forward kept}}\ {w.tex()}\ "
+                    rf"\text{{sharded --- its gradient scatters back to the same shards}}"
+                )
+            else:
+                base = st.src.name[1:] if st.src.name.startswith("d") else None
+                fwd = find(AllGatherStep, axis=st.axis, phase=st.phase,
+                           dim=st.scatter_dim, base=base) or find(
+                    AllGatherStep, axis=st.axis, phase=st.phase, dim=st.scatter_dim
+                )
+                if fwd is not None:
+                    st.note_tex = DUAL_FWD + fwd.tex()
+        elif isinstance(st, AllReduceStep) and st.src.name.startswith("dW"):
+            w = make_weight(cfg, st.src.name[1:])
+            st.note_tex = (
+                rf"\text{{forward replicated}}\ {w.tex()}\ "
+                rf"\text{{--- every shard's gradient must be summed}}"
+            )
+        elif isinstance(st, AllToAllStep):
+            want = "combine" if st.direction == "dispatch" else "dispatch"
+            for f in rec.fwd_coll:
+                if isinstance(f, AllToAllStep) and f.direction == want and f.axis == st.axis:
+                    st.note_tex = DUAL_FWD + f.tex()
+                    break
 
 
 def _wt_scatter_dim(cfg: StrategyConfig, name: str) -> str | None:
@@ -160,6 +229,9 @@ def backward_mlp(cfg: StrategyConfig, rec: LayerRecord, d_out: LTensor, layer: i
     )
     _tag_note(s, rec, "W_in")
     steps += s
+    _tag_collective_notes(steps, rec, cfg)
+    _tag_collective_notes(steps, rec, cfg)
+    _tag_collective_notes(steps, rec, cfg)
     for st in steps:
         st.backward = True
     return steps, dx
@@ -177,8 +249,8 @@ def backward_moe(cfg: StrategyConfig, rec: LayerRecord, d_out: LTensor, layer: i
     steps.append(AllToAllStep(src=d_out, out=dxe, axis=axis, direction="dispatch",
                               layer=layer, phase=phase))
 
-    note_out = rec.fwd_mm["W_out"].tex() if "W_out" in rec.fwd_mm else None
-    note_in = rec.fwd_mm["W_in"].tex() if "W_in" in rec.fwd_mm else None
+    note_out = (FROM_FWD + rec.fwd_mm["W_out"].tex()) if "W_out" in rec.fwd_mm else None
+    note_in = (FROM_FWD + rec.fwd_mm["W_in"].tex()) if "W_in" in rec.fwd_mm else None
     dtmp = LTensor("dTmp", ("E", "S", "F"), {"E": axis}, kind="grad")
     steps.append(MatMulStep(a=dxe, b=w_out.transposed(), out=dtmp, contract="D",
                             layer=layer, phase=phase, note_tex=note_out))
@@ -235,7 +307,7 @@ def backward_attention(cfg: StrategyConfig, rec: LayerRecord, d_out: LTensor, la
         dk = replace(rec.k.grad(), name="dK", partial=frozenset({ctx}))
         dv = replace(rec.v.grad(), name="dV", partial=frozenset({ctx}))
         steps.append(AttentionBwdStep(da=da, dq=dq, dk=dk, dv=dv, layer=layer, phase=phase,
-                                      note_tex=rec.fwd_attn.tex() if rec.fwd_attn else None))
+                                      note_tex=(FROM_FWD + rec.fwd_attn.tex()) if rec.fwd_attn else None))
         dk_res, dv_res = dk.scattered("T", ctx), dv.scattered("T", ctx)
         steps.append(ReduceScatterStep(src=dk, out=dk_res, axis=ctx, scatter_dim="T",
                                        layer=layer, phase=phase))
@@ -246,7 +318,7 @@ def backward_attention(cfg: StrategyConfig, rec: LayerRecord, d_out: LTensor, la
         dk = replace(rec.k.grad(), name="dK")
         dv = replace(rec.v.grad(), name="dV")
         steps.append(AttentionBwdStep(da=da, dq=dq, dk=dk, dv=dv, layer=layer, phase=phase,
-                                      note_tex=rec.fwd_attn.tex() if rec.fwd_attn else None))
+                                      note_tex=(FROM_FWD + rec.fwd_attn.tex()) if rec.fwd_attn else None))
 
     dqkv = replace(dq, name="dQKV")
     steps.append(MergeQKVStep(q=dq, k=dk, v=dv, out=dqkv, layer=layer, phase=phase))

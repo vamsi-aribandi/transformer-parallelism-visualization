@@ -47,7 +47,7 @@ WEIGHT_SLOT_FRACS: dict[str, tuple[float, float]] = {
 }
 # lane-internal track centers, as fractions of lane height from the TOP
 WEIGHT_TRACK = 0.24
-ACT_TRACK = 0.70
+ACT_TRACK = 0.66  # leaves the lane-bottom stash row clear of traveling decks
 
 
 class StationSpec:
@@ -237,9 +237,9 @@ class ModelCanvas(VGroup):
             x = self.weight_anchor(key, 0 if anchor == "slot0" else 1, lane)[0]
         else:
             x = self.anchor(key, anchor, lane)[0]
-        x += spread * 0.36
+        x += spread * 0.30
         rect = self.lanes[lane].rect
-        return np.array([x, rect.get_bottom()[1] + 0.15, 0.0])
+        return np.array([x, rect.get_bottom()[1] + 0.11, 0.0])
 
     def grad_anchor(self, key: str, slot: int, lane: int) -> np.ndarray:
         """Where a weight-gradient rect sits: a 'shadow' offset from its weight."""
@@ -254,7 +254,7 @@ class ModelCanvas(VGroup):
     def fit_act(self, group: VGroup, key: str, name: str, lane: int,
                 *, max_w: float = 0.95, max_h: float | None = None) -> VGroup:
         lane_h = self.lanes[lane].rect.height
-        cap_h = max_h if max_h is not None else lane_h * 0.52
+        cap_h = max_h if max_h is not None else lane_h * 0.46
         s = min(1.0, max_w / max(group.width, 1e-6), cap_h / max(group.height, 1e-6))
         group.scale(s)
         group.move_to(self.anchor(key, name, lane))

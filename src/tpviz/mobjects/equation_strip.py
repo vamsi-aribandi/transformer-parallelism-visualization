@@ -31,9 +31,7 @@ class EquationStrip(VGroup):
         if main.width > max_w:
             main.scale(max_w / main.width)
         if note is not None:
-            note_m = math_label(
-                rf"\text{{from forward:}}\quad {note}", font_size=19, color=style.MUTED_TEXT
-            )
+            note_m = math_label(note, font_size=19, color=style.MUTED_TEXT)
             note_m.set_z_index(style.Z_STRIP + 1)
             if note_m.width > max_w:
                 note_m.scale(max_w / note_m.width)
@@ -50,4 +48,8 @@ class EquationStrip(VGroup):
         old, self.content = self.content, new
         self.remove(old)
         self.add(new)
-        return FadeTransform(old, new)
+        # crossfade with a lag (not a shape morph): overlapping glyph soup reads
+        # as "overlapping text" in stills
+        from manim import AnimationGroup, FadeOut
+
+        return AnimationGroup(FadeOut(old), FadeIn(new), lag_ratio=0.5)
