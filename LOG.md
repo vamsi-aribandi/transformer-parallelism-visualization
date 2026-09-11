@@ -57,4 +57,19 @@ Linear, detailed log of work. Newest entries at the bottom. See [STATE.md](STATE
 - Fixes from frame QA: station-highlight got BRIGHTER during summary dim (set_opacity raised its 0.06 fill → FadeOut instead); tracker clipped at right edge (x clamp); header-title dict `.get` evaluated its fallback eagerly for dock stations (KeyError on phase "").
 - **Perf**: renders went 13 min → ~1 min with `--disable_caching` — Manim's animation-hash on the canvas's many submobjects was the bottleneck, not rendering. Makefile targets updated.
 - Deleted `mobjects/device_grid.py` (gallery no longer uses DeviceBox). Engine tests untouched and green throughout.
-- Re-rendered all six at 1080p60 into `renders/`.
+- Re-rendered all six at 1080p60 into `renders/`; pushed to github.com/vamsi-aribandi/transformer-parallelism-visualization.
+
+## 2026-09-10 — Session 2 (v3): forward+backward training videos
+
+- New goal from user: separate per-strategy videos showing forward AND backward — saved activations, 2× backward compute, gradient tensors. 480p only until sign-off.
+- **Semantics** (`core/backward.py`, all engine-derived):
+  - `plan_matmul` generalized to multi-dim contraction (`dW = Xᵀ·dY` contracts B and T); partial axes can now stack and resolve sequentially. `LTensor` gained `transposed()`/`grad()` and a `grad` kind; notation renders `dX`, `dW_in` as `\mathrm{d}X`, ….
+  - `annotate_forward` injects a `SaveActivationStep` for each forward matmul's (post-gather) input operand + Q/K/V — "save what the matmul consumed" — and records per-layer operands for the backward walk.
+  - Backward per layer (reverse order): MLP `dTmp = dOut·W_outᵀ`, `dW_out = Tmpᵀ·dOut`, gelu′, `dX = dTmp·W_inᵀ`, `dW_in`; attention `dA = dX·W_oᵀ`, `dW_o`, attention-core backward (CP: dK/dV partial over the context axis → ReduceScatter onto T), merge dQKV, `dX = dQKV·W_qkvᵀ`, `dW_qkv`. MoE: grad AllToAll dispatch/expert backward/combine. All collectives fall out of the engine's four cases; 8 new tests pin them (DP: AllReduce ×8; FSDP: re-gather AG ×8 + grad RS ×8 landing sharded like the weights; TP: mirrored AG/RS, dW local; CP: dK/dV RS + dW AllReduce over X; EP: 4 grad AllToAlls + attention dW AllReduce over Z; PP: reverse schedule, first backward at last stage, 2-tick spacing). Tests passed on first run — the engine really did derive the backward pass.
+- **Visuals** (`scenes/train_base.py` + `*_train.py`):
+  - Stash row along each lane's bottom edge: saved activations park as dimmed minis (first save shows the memory-cost caption); dW matmuls pulse the stash mini they consume.
+  - Gradients are rose; weight-gradients appear as rose shadow rects behind their weight (partial → dashed until AllReduce/ReduceScatter resolves them, per-lane slice offsets visible after RS).
+  - Backward on_phase slides everything to station EXIT anchors (flow runs right→left); `GradInitStep` transforms Out into dOut at the Out dock ("backward starts from the loss"); finale lands dIn at the In dock.
+  - matmul counter beside the collectives counter; train summary card: fwd vs bwd matmuls + per-pass collectives + "backward ≈ 2× forward".
+  - EP refactored into `MoETokenMixin` (fwd + bwd token crossflys, mirrored columns for backward); PP train: forward drain then rose gradient microbatches flowing back with UP-LEFT P2P hops and double-width rose Gantt cells (`gantt_fill_bwd`), smaller cells (0.42) to fit the 15-tick timeline.
+  - Makefile: `lq-train-all` (480p, `--disable_caching`); hq-all deliberately unchanged.

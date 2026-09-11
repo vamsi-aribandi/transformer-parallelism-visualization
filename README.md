@@ -17,6 +17,17 @@ MLP becomes a routed MoE for expert parallelism):
 | `pp` | Pipeline parallelism — stages own layers, 4 microbatches | P2P activation sends (Gantt + bubble shown) |
 | `ep` | Expert parallelism (MoE) — `W[E_Z, D, F]` | AllToAll dispatch + combine |
 
+## Forward + backward (training-step) videos
+
+Each strategy also has a `*_train` scene showing the full training step:
+activations saved to a per-station stash during the forward pass (the memory
+cost), then rose gradient tensors flowing right→left — `dX = dY·Wᵀ` and
+`dW = Xᵀ·dY` per matmul, so backward is visibly 2× the forward compute — with
+each strategy's backward collectives (DP's gradient AllReduce, FSDP's weight
+re-gather + gradient ReduceScatter, TP's mirrored AllGather/ReduceScatter,
+CP's dK/dV ReduceScatter, EP's gradient AllToAlls, PP's reverse pipeline with
+double-width Gantt cells). Render at 480p with `make lq-train-all`.
+
 ## How it works
 
 The collectives are **derived, not hand-animated**: `core/engine.py` implements

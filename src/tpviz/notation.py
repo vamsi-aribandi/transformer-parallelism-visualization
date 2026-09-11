@@ -40,6 +40,11 @@ NAME_TEX = {
 def name_tex(name: str) -> str:
     if name in NAME_TEX:
         return NAME_TEX[name]
+    if name.startswith("d") and len(name) > 1:
+        # gradient of a known tensor: dX, dW_in, dOut, ...
+        base = name[1:]
+        if base in NAME_TEX or len(base) == 1:
+            return rf"\mathrm{{d}}{name_tex(base)}"
     if len(name) == 1:
         return name
     return rf"\mathrm{{{name}}}"

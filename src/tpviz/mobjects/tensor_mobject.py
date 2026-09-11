@@ -120,11 +120,14 @@ class WeightRect(TensorVis):
         full_h = DIM_LEN[d0] * 0.75 * scale
         full_w = DIM_LEN[d1] * 0.75 * scale
 
+        fill = style.TENSOR_FILL.get(t.kind, style.WEIGHT_FILL)
+        stroke = style.TENSOR_STROKE.get(t.kind, style.WEIGHT_STROKE)
         f0, o0 = self.frac(d0)
         f1, o1 = self.frac(d1)
         solid = Rectangle(width=full_w * f1, height=full_h * f0, stroke_width=1.8)
-        solid.set_fill(style.WEIGHT_FILL, opacity=style.FILL_OPACITY)
-        solid.set_stroke(style.WEIGHT_STROKE)
+        opacity = style.PARTIAL_FILL_OPACITY if t.partial else style.FILL_OPACITY
+        solid.set_fill(fill, opacity=opacity)
+        solid.set_stroke(stroke)
         self.solid = solid
 
         if f0 < 1.0 or f1 < 1.0:

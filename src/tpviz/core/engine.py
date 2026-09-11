@@ -33,62 +33,65 @@ def plan_matmul(
     a: LTensor,
     b: LTensor,
     out_name: str,
-    contract: str,
+    contract: str | tuple[str, ...],
     *,
     layer: int,
     phase: str,
     scatter_dim: str | None = None,
     prefer_reduce_scatter: bool = True,
+    out_kind: str = "activation",
 ) -> tuple[list[Step], LTensor]:
-    """Plan a · b contracting over `contract`. Returns (steps, result tensor)."""
-    if contract not in a.dims or contract not in b.dims:
-        raise ValueError(f"contract dim {contract!r} must be in both {a.dims} and {b.dims}")
+    """Plan a · b contracting over `contract` (one dim, or several — weight
+    gradients contract over both B and T). Returns (steps, result tensor)."""
+    contracts = (contract,) if isinstance(contract, str) else tuple(contract)
+    for c in contracts:
+        if c not in a.dims or c not in b.dims:
+            raise ValueError(f"contract dim {c!r} must be in both {a.dims} and {b.dims}")
     if a.partial or b.partial:
         raise ValueError("operands with unresolved partial sums cannot be multiplied")
 
     steps: list[Step] = []
-    a_ax, b_ax = a.axis_of(contract), b.axis_of(contract)
-
-    if a_ax and b_ax and a_ax != b_ax:
-        raise ValueError(
-            f"contract dim {contract!r} sharded over different axes ({a_ax} vs {b_ax})"
-        )
-
-    partial_axis: str | None = None
-    if a_ax and b_ax:
-        # Case 3: local matmul over shards produces an unreduced partial sum.
-        partial_axis = a_ax
-    elif a_ax or b_ax:
-        # Case 2: AllGather the operand sharded along the contracting dim.
-        victim = a if a_ax else b
-        gathered = victim.gathered(contract)
-        steps.append(
-            AllGatherStep(
-                src=victim,
-                out=gathered,
-                axis=a_ax or b_ax,  # the one that is set
-                dim=contract,
-                jit=victim.kind == "weight",
-                layer=layer,
-                phase=phase,
+    partial_axes: list[str] = []
+    for c in contracts:
+        a_ax, b_ax = a.axis_of(c), b.axis_of(c)
+        if a_ax and b_ax and a_ax != b_ax:
+            raise ValueError(
+                f"contract dim {c!r} sharded over different axes ({a_ax} vs {b_ax})"
             )
-        )
-        if a_ax:
-            a = gathered
-        else:
-            b = gathered
+        if a_ax and b_ax:
+            # Case 3: local matmul over shards produces an unreduced partial sum.
+            partial_axes.append(a_ax)
+        elif a_ax or b_ax:
+            # Case 2: AllGather the operand sharded along the contracting dim.
+            victim = a if a_ax else b
+            gathered = victim.gathered(c)
+            steps.append(
+                AllGatherStep(
+                    src=victim,
+                    out=gathered,
+                    axis=a_ax or b_ax,  # the one that is set
+                    dim=c,
+                    jit=victim.kind == "weight",
+                    layer=layer,
+                    phase=phase,
+                )
+            )
+            if a_ax:
+                a = gathered
+            else:
+                b = gathered
 
     # Case 4: same axis would shard two output dims -> AllGather the weight
     # (or `b` if neither operand is a weight) along its conflicting dims.
-    a_out_axes = {ax for d, ax in a.sharding.items() if d != contract}
-    b_out_axes = {ax for d, ax in b.sharding.items() if d != contract}
+    a_out_axes = {ax for d, ax in a.sharding.items() if d not in contracts}
+    b_out_axes = {ax for d, ax in b.sharding.items() if d not in contracts}
     conflict = a_out_axes & b_out_axes
     if conflict:
         victim_is_b = b.kind == "weight" or a.kind != "weight"
         victim = b if victim_is_b else a
         for dim in list(victim.dims):
             ax = victim.axis_of(dim)
-            if dim != contract and ax in conflict:
+            if dim not in contracts and ax in conflict:
                 gathered = victim.gathered(dim)
                 steps.append(
                     AllGatherStep(
@@ -107,37 +110,40 @@ def plan_matmul(
         else:
             a = victim
 
-    out_dims = tuple(d for d in a.dims if d != contract) + tuple(
-        d for d in b.dims if d != contract
+    out_dims = tuple(d for d in a.dims if d not in contracts) + tuple(
+        d for d in b.dims if d not in contracts
     )
-    out_sharding = {d: ax for d, ax in a.sharding.items() if d != contract}
-    out_sharding |= {d: ax for d, ax in b.sharding.items() if d != contract}
+    out_sharding = {d: ax for d, ax in a.sharding.items() if d not in contracts}
+    out_sharding |= {d: ax for d, ax in b.sharding.items() if d not in contracts}
     out = LTensor(
         out_name,
         out_dims,
         out_sharding,
-        partial=frozenset({partial_axis}) if partial_axis else frozenset(),
-        kind="activation",
+        partial=frozenset(partial_axes),
+        kind=out_kind,
     )
-    steps.append(MatMulStep(a=a, b=b, out=out, contract=contract, layer=layer, phase=phase))
+    steps.append(
+        MatMulStep(a=a, b=b, out=out, contract=",".join(contracts), layer=layer, phase=phase)
+    )
 
-    if partial_axis:
+    for axis in partial_axes:
         if scatter_dim and prefer_reduce_scatter:
-            resolved = out.scattered(scatter_dim, partial_axis)
+            resolved = out.scattered(scatter_dim, axis)
             steps.append(
                 ReduceScatterStep(
                     src=out,
                     out=resolved,
-                    axis=partial_axis,
+                    axis=axis,
                     scatter_dim=scatter_dim,
                     layer=layer,
                     phase=phase,
                 )
             )
+            scatter_dim = None  # only the first resolution can scatter a new dim
         else:
-            resolved = out.reduced(partial_axis)
+            resolved = out.reduced(axis)
             steps.append(
-                AllReduceStep(src=out, out=resolved, axis=partial_axis, layer=layer, phase=phase)
+                AllReduceStep(src=out, out=resolved, axis=axis, layer=layer, phase=phase)
             )
         out = resolved
 

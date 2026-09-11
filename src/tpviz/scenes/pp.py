@@ -35,11 +35,13 @@ from tpviz.mobjects.labels import caption_text
 from tpviz.mobjects.tensor_mobject import ActivationDeck, WeightRect
 from tpviz.scenes.base import PHASE_WEIGHTS, ForwardPassScene
 
-CELL_W, CELL_H = 0.62, 0.34
+CELL_W, CELL_H = 0.62, 0.34  # defaults; scenes may override via class attrs
 
 
 class PPScene(ForwardPassScene):
     cfg = configs.PP
+    cell_w = CELL_W
+    cell_h = CELL_H
 
     def construct(self):
         self.speed = 1.0
@@ -115,24 +117,29 @@ class PPScene(ForwardPassScene):
         )
         self.stage_deck: dict[int, VGroup | None] = {s: None for s in range(pp.n_stages)}
         self.done: list[VGroup] = []
+        self.done_by_mb: dict[int, VGroup] = {}
 
     # ------------------------------------------------------------------ gantt
+    def gantt_n_ticks(self) -> int:
+        pp = self.cfg.pipeline
+        return pp.n_microbatches + pp.n_stages - 1
+
     def build_gantt(self):
         pp = self.cfg.pipeline
-        n_ticks = pp.n_microbatches + pp.n_stages - 1
-        self.gantt_origin = np.array([0.3 - (n_ticks - 1) * CELL_W / 2, -2.15, 0.0])
+        n_ticks = self.gantt_n_ticks()
+        self.gantt_origin = np.array([0.3 - (n_ticks - 1) * self.cell_w / 2, -2.15, 0.0])
 
         frame_cells = VGroup()
         for s in range(pp.n_stages):
             for t in range(n_ticks):
-                c = Rectangle(width=CELL_W, height=CELL_H, stroke_width=1.0)
+                c = Rectangle(width=self.cell_w, height=self.cell_h, stroke_width=1.0)
                 c.set_stroke(style.DEVICE_BOX_STROKE, opacity=0.8)
                 c.move_to(self.gantt_cell_center(s, t))
                 frame_cells.add(c)
         row_labels = VGroup(
             *[
                 Text(f"S{s}", font_size=15, color=style.DEVICE_HUES[s]).move_to(
-                    self.gantt_cell_center(s, 0) + LEFT * (CELL_W / 2 + 0.35)
+                    self.gantt_cell_center(s, 0) + LEFT * (self.cell_w / 2 + 0.35)
                 )
                 for s in range(pp.n_stages)
             ]
@@ -144,10 +151,10 @@ class PPScene(ForwardPassScene):
         self.play(FadeIn(self.gantt), run_time=0.6)
 
     def gantt_cell_center(self, stage: int, tick: int) -> np.ndarray:
-        return self.gantt_origin + np.array([tick * CELL_W, -stage * (CELL_H + 0.08), 0.0])
+        return self.gantt_origin + np.array([tick * self.cell_w, -stage * (self.cell_h + 0.08), 0.0])
 
     def gantt_fill(self, stage: int, tick: int, mb: int) -> Rectangle:
-        c = Rectangle(width=CELL_W - 0.06, height=CELL_H - 0.06, stroke_width=0)
+        c = Rectangle(width=self.cell_w - 0.06, height=self.cell_h - 0.06, stroke_width=0)
         c.set_fill(style.MICROBATCH_HUES[mb % len(style.MICROBATCH_HUES)], opacity=0.9)
         c.move_to(self.gantt_cell_center(stage, tick))
         c.set_z_index(style.Z_LABEL + 1)
@@ -212,6 +219,7 @@ class PPScene(ForwardPassScene):
                     deck = self.stage_deck[c.stage]
                     self.stage_deck[c.stage] = None
                     self.done.append(deck)
+                    self.done_by_mb[c.microbatch] = deck
                     self.play(
                         deck.animate.move_to(
                             self.canvas.dock_slot("out", len(self.done) - 1, pitch=0.92)
@@ -240,7 +248,7 @@ class PPScene(ForwardPassScene):
         for s in range(pp.n_stages):
             for t in range(n_ticks):
                 if not (0 <= t - s < pp.n_microbatches):
-                    r = Rectangle(width=CELL_W - 0.06, height=CELL_H - 0.06, stroke_width=1.8)
+                    r = Rectangle(width=self.cell_w - 0.06, height=self.cell_h - 0.06, stroke_width=1.8)
                     r.set_stroke(style.COMM_COLOR)
                     r.move_to(self.gantt_cell_center(s, t))
                     r.set_z_index(style.Z_LABEL + 1)

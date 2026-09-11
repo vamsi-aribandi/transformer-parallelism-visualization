@@ -17,6 +17,7 @@ class Step:
     phase: str = ""  # "attn" | "mlp" | "moe" | "pipeline"
     caption: str | None = None
     microbatch: int | None = None
+    backward: bool = False  # backward-pass step: flow runs right -> left
 
 
 @dataclass(kw_only=True)
@@ -132,3 +133,50 @@ class P2PSendStep(Step):
 @dataclass(kw_only=True)
 class AnnotateStep(Step):
     text: str = ""
+
+
+@dataclass(kw_only=True)
+class SaveActivationStep(Step):
+    """Forward: stash a tensor that the backward pass will need (memory cost)."""
+
+    t: LTensor
+    slot: int = 0  # stash position within the station
+
+
+@dataclass(kw_only=True)
+class GradInitStep(Step):
+    """Backward starts: dOut = ∂L/∂Out appears at the output."""
+
+    out: LTensor
+
+    def tex(self) -> str:
+        return rf"{self.out.tex()} = \partial L / \partial \mathrm{{Out}}"
+
+
+@dataclass(kw_only=True)
+class MergeQKVStep(Step):
+    """Backward of the QKV split: dQ, dK, dV merge into dQKV."""
+
+    q: LTensor
+    k: LTensor
+    v: LTensor
+    out: LTensor
+
+    def tex(self) -> str:
+        return rf"{self.q.tex()},\ {self.k.tex()},\ {self.v.tex()} \,\to\, {self.out.tex()}"
+
+
+@dataclass(kw_only=True)
+class AttentionBwdStep(Step):
+    """Backward through the attention core: dA -> dQ, dK, dV (using saved Q, K, V)."""
+
+    da: LTensor
+    dq: LTensor
+    dk: LTensor
+    dv: LTensor
+
+    def tex(self) -> str:
+        return (
+            rf"\text{{Attn}}^\top({self.da.tex()})"
+            rf" \,\to\, {self.dq.tex()},\ {self.dk.tex()},\ {self.dv.tex()}"
+        )

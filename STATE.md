@@ -6,7 +6,11 @@ Current state and design decisions. Companion: [LOG.md](LOG.md) (linear work log
 
 Manim CE videos explaining transformer parallelism in the **forward pass**, one video per strategy, in the [JAX scaling book](https://jax-ml.github.io/scaling-book/)'s sharding notation: `A[B_X, T, D]` (subscript = mesh axis sharding that dim), partial sums `C[I,K]{U_X}`, `Mesh({'X': 4})`, `AllGather_X`, `ReduceScatter_{Y,D}`, `AllToAll_Z`.
 
-**Deliverables to date**: 6 videos in `renders/` (1080p60): `dp`, `fsdp`, `tp`, `cp`, `pp`, `ep`. Model shown: 2-layer transformer, simple MHA (fused head dim `H`) + MLP; the MLP is a routed MoE for EP.
+**Deliverables to date**:
+- 6 forward-pass videos in `renders/` (1080p60): `dp`, `fsdp`, `tp`, `cp`, `pp`, `ep`.
+- 6 **forward+backward** (training-step) videos, 480p only until the look is signed off (`make lq-train-all`; scenes `*_train.py`). They add: saved activations parking in a per-station stash row (the memory cost), rose gradient tensors flowing right→left, weight-gradient "shadow" rects behind each weight, a matmul counter showing backward = 2× forward, and PP's double-width backward Gantt cells.
+
+Model shown: 2-layer transformer, simple MHA (fused head dim `H`) + MLP; the MLP is a routed MoE for EP.
 
 ## Architecture (the load-bearing decision)
 
@@ -15,7 +19,8 @@ Collectives are **derived, not hand-animated**, so future multi-axis combos (FSD
 - `src/tpviz/core/engine.py` — `plan_matmul()`: the scaling book's four sharded-matmul cases, symbolically. Case 2 alone yields both FSDP's jit weight-gather and TP's activation-gather; case 3 yields TP's `{U_Y}` partial + ReduceScatter; case 4 yields FSDP's second weight-gather.
 - `src/tpviz/core/model.py` — `forward_steps(cfg)`: walks the 2-layer transformer, emits a renderer-independent step list (`core/steps.py`). Non-matmul-shaped pieces are emitted explicitly: CP's K/V AllGather, MoE routing + AllToAlls, the GPipe pipeline schedule (`tick = microbatch + stage`).
 - `src/tpviz/configs.py` — the 6 `StrategyConfig`s. Axis conventions: X = data/FSDP/context, Y = tensor, Z = expert, `stage` = pipeline.
-- `tests/test_engine.py` — pins each strategy's exact collective sequence to the book. **Any semantic change must keep these green.**
+- `src/tpviz/core/backward.py` — `train_steps(cfg)`: forward (each matmul's consumed input emitted as a `SaveActivationStep`) + backward **derived with the same engine**: per forward matmul, `dX = dY·Wᵀ` (single contract) and `dW = Xᵀ·dY` (contracts over B *and* T — `plan_matmul` accepts multi-dim contraction). The four cases then yield: DP gradient AllReduce, FSDP weight re-gather + grad ReduceScatter, TP's mirrored AG/RS, CP's dK/dV ReduceScatter + weight-grad AllReduce over context, EP's grad AllToAlls. PP gets a GPipe backward schedule with 2-tick-wide cells.
+- `tests/test_engine.py` + `tests/test_backward.py` — pin each strategy's exact forward AND backward collective sequences, the 2× matmul ratio, and save-before-backward ordering. **Any semantic change must keep these green.**
 - Scenes (`src/tpviz/scenes/`) replay the steps: `base.py` is the config-driven player; `dp/fsdp/tp/cp` are thin subclasses; `pp.py` (tick-grouped playback + Gantt) and `ep.py` (token-square AllToAll) carry custom choreography.
 
 ## Visual language

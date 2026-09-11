@@ -7,7 +7,7 @@ from typing import Literal, Mapping
 
 from tpviz import notation
 
-Kind = Literal["weight", "activation", "kv"]
+Kind = Literal["weight", "activation", "kv", "grad"]
 
 
 @dataclass(frozen=True)
@@ -49,6 +49,15 @@ class LTensor:
 
     def renamed(self, name: str) -> LTensor:
         return replace(self, name=name)
+
+    def transposed(self) -> LTensor:
+        """Swap the last two dims (sharding follows the dims, so it's untouched)."""
+        dims = self.dims[:-2] + (self.dims[-1], self.dims[-2])
+        return replace(self, dims=dims)
+
+    def grad(self) -> LTensor:
+        """The gradient tensor: same dims/sharding, name d<name>, kind 'grad'."""
+        return replace(self, name=f"d{self.name}", kind="grad", partial=frozenset())
 
     def tex(self) -> str:
         return notation.tensor_tex(self)

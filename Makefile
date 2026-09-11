@@ -28,3 +28,14 @@ hq-all:
 	done
 
 .PHONY: lq snap gallery frames test hq-all
+
+TRAIN_SCENES = dp_train:DPTrainScene fsdp_train:FSDPTrainScene tp_train:TPTrainScene cp_train:CPTrainScene pp_train:PPTrainScene ep_train:EPTrainScene
+
+# forward+backward videos: 480p only until the look is signed off
+lq-train-all:
+	for s in $(TRAIN_SCENES); do \
+		short=$${s%%:*}; cls=$${s##*:}; \
+		uv run manim render -ql --disable_caching src/tpviz/scenes/$$short.py $$cls || exit 1; \
+	done
+
+.PHONY: lq-train-all

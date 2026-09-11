@@ -261,8 +261,11 @@ class ForwardPassScene(Scene):
             old, self.tracker = self.tracker, new
             self.play(FadeTransform(old, new), run_time=run_time or self.rt(0.25))
 
+    def captions_on(self) -> bool:
+        return self.speed >= 1.0
+
     def show_caption_text(self, text: str | None):
-        if text is None or self.speed < 1.0:
+        if text is None or not self.captions_on():
             return
         cap = caption_text(text, font_size=23)
         if cap.width > 12.8:
@@ -459,17 +462,27 @@ class ForwardPassScene(Scene):
     def handle_AllReduceStep(self, step: AllReduceStep):
         self._exchange(step)
 
+    def build_tensor_vis(self, t: LTensor, lane: int, *, at=None, like=None) -> VGroup:
+        return self.build_act_vis(t, lane, at=at, like=like)
+
     def _exchange(self, step):
         key = self.canvas.station_key(step.layer, step.phase)
         self.play(self.strip.show(step.tex(), color=style.COMM_COLOR), run_time=self.rt(0.45))
         partials = self.acts.pop(step.src.name)
-        results = [
-            self.build_act_vis(step.out, i, at=self.canvas.anchor(key, "exit", i))
-            for i in range(len(partials))
-        ]
+        if step.backward:
+            # gradients resolve in place; leftward motion comes from the flow itself
+            results = [
+                self.build_tensor_vis(step.out, i, like=partials[i])
+                for i in range(len(partials))
+            ]
+        else:
+            results = [
+                self.build_tensor_vis(step.out, i, at=self.canvas.anchor(key, "exit", i))
+                for i in range(len(partials))
+            ]
         coll.animate_exchange_resolve(self, partials, results, run_time=self.rt(1.4))
         self.acts[step.out.name] = results
-        self.set_tracker(step.out, self.canvas.anchor(key, "exit", 0)[0])
+        self.set_tracker(step.out, results[0].get_center()[0])
         self.comm_bump()
 
     def handle_AllToAllStep(self, step: AllToAllStep):
@@ -521,11 +534,13 @@ class ForwardPassScene(Scene):
             run_time=0.3,
         )
 
+    def summary_steps(self) -> list[Step]:
+        return forward_steps(self.cfg)
+
     def summary(self):
         self.speed = 1.0
         self.dock_out_finale()
-        steps = forward_steps(self.cfg)
-        counts = count_collectives(steps)
+        counts = count_collectives(self.summary_steps())
         from manim import VMobject
 
         background = [

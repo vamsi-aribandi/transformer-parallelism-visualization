@@ -17,8 +17,18 @@ ACT_STROKE = "#fcd34d"
 KV_FILL = "#14b8a6"
 KV_STROKE = "#5eead4"
 
-TENSOR_FILL = {"weight": WEIGHT_FILL, "activation": ACT_FILL, "kv": KV_FILL}
-TENSOR_STROKE = {"weight": WEIGHT_STROKE, "activation": ACT_STROKE, "kv": KV_STROKE}
+GRAD_FILL = "#f43f5e"
+GRAD_STROKE = "#fda4af"
+
+TENSOR_FILL = {"weight": WEIGHT_FILL, "activation": ACT_FILL, "kv": KV_FILL, "grad": GRAD_FILL}
+TENSOR_STROKE = {
+    "weight": WEIGHT_STROKE,
+    "activation": ACT_STROKE,
+    "kv": KV_STROKE,
+    "grad": GRAD_STROKE,
+}
+
+SAVED_OPACITY = 0.45  # stashed activations awaiting the backward pass
 
 # Fill opacity for solid vs partial (unreduced) tensors.
 FILL_OPACITY = 0.85
