@@ -53,6 +53,10 @@ class RecorderMixin:
         self.clock = 0.0
         self._units: dict[int, ObjRecord] = {}  # id(mobject) -> record
         self._live: dict[int, Mobject] = {}
+        # pin every recorded mobject: CPython reuses id() of collected objects,
+        # and a fresh mobject at a dead one's address would silently never
+        # register (this exact bug ate the equation strip)
+        self._pins: list[Mobject] = []
         self._steps: list[StepSeg] = []
         self._sections: list[tuple[str, float, float]] = []
         self._cur_section = "setup"
@@ -127,6 +131,7 @@ class RecorderMixin:
                     continue
                 self._units[oid] = ObjRecord(oid=oid, spec=spec, t0=self.clock)
                 self._live[oid] = m
+                self._pins.append(m)
         for oid in list(self._live):
             if oid not in live:
                 rec = self._units[oid]

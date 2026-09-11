@@ -43,7 +43,7 @@ def _hex(c) -> str:
 
 
 def iter_units(m: Mobject) -> Iterator[Mobject]:
-    if getattr(m, "web_role", None) == "counter":
+    if getattr(m, "web_role", None) in ("counter", "chrome"):
         return
     if isinstance(m, _UNIT_TYPES):
         yield m
@@ -99,10 +99,12 @@ def serialize(m: Mobject) -> dict | None:
     elif isinstance(m, MathTex):
         spec = {"c": "eq", "tex": m.tex_string, "color": _hex(m.get_color())}
     elif isinstance(m, Text):
+        fam = m.family_members_with_points()
+        color = _hex(fam[0].get_fill_color()) if fam else _hex(m.get_color())
         spec = {
             "c": "text",
             "s": m.original_text if hasattr(m, "original_text") else m.text,
-            "color": _hex(m.get_color()),
+            "color": color,
             "bold": getattr(m, "weight", "NORMAL") == "BOLD",
         }
     elif isinstance(m, DashedVMobject):

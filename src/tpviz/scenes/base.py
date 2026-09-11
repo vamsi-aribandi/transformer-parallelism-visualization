@@ -147,6 +147,7 @@ class ForwardPassScene(Scene):
         ).arrange(RIGHT, buff=0.4)
         header.to_corner(UP + LEFT, buff=0.2)
         header.set_z_index(style.Z_LABEL)
+        header.web_role = "chrome"
         self.play(ReplacementTransform(card, header), run_time=0.8)
         self.header = header
 
@@ -176,6 +177,7 @@ class ForwardPassScene(Scene):
         self.comm_value = caption_text("0", font_size=30, color=style.GOOD_COLOR)
         counter = VGroup(self.comm_label, self.comm_value).arrange(DOWN, buff=0.08)
         counter.to_corner(UP + RIGHT, buff=0.2)
+        counter.web_role = "chrome"
         self.add(counter)
 
         self.play(FadeIn(self.canvas), run_time=1.0)
@@ -270,6 +272,7 @@ class ForwardPassScene(Scene):
         if text is None or not self.captions_on():
             return
         cap = caption_text(text, font_size=23)
+        cap.web_role = "chrome"
         if cap.width > 12.8:
             cap.scale(12.8 / cap.width)
         cap.move_to(UP * CAPTION_Y)
@@ -288,6 +291,7 @@ class ForwardPassScene(Scene):
         badge = Text(label, font_size=20, color=style.ACCENT, weight="BOLD")
         badge.next_to(self.header, DOWN, buff=0.12, aligned_edge=LEFT)
         badge.set_z_index(style.Z_LABEL)
+        badge.web_role = "chrome"
 
         anims = []
         if self.caption_mobj is not None:
@@ -316,6 +320,7 @@ class ForwardPassScene(Scene):
     def comm_bump(self):
         self.comm_count += 1
         new = caption_text(str(self.comm_count), font_size=30, color=style.COMM_COLOR)
+        new.web_role = "chrome"
         new.move_to(self.comm_value.get_center())
         self.play(ReplacementTransform(self.comm_value, new), run_time=0.3)
         self.comm_value = new
@@ -507,6 +512,7 @@ class ForwardPassScene(Scene):
 
     def handle_AnnotateStep(self, step: AnnotateStep):
         big = caption_text(step.text, font_size=30, color=style.ACCENT)
+        big.web_role = "chrome"
         if big.width > 12.5:
             big.scale(12.5 / big.width)
         big.move_to(UP * CAPTION_Y)

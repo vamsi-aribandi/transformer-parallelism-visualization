@@ -104,6 +104,7 @@ class TrainScene(ForwardPassScene):
         self.matmul_label = caption_text("matmuls", font_size=16, color=style.MUTED_TEXT)
         self.matmul_value = caption_text("0", font_size=30, color=style.TEXT_COLOR)
         counter = VGroup(self.matmul_label, self.matmul_value).arrange(DOWN, buff=0.08)
+        counter.web_role = "chrome"
         counter.to_corner(UP + np.array([1.0, 0.0, 0.0]), buff=0.2)
         counter.shift(np.array([-1.5, 0.0, 0.0]))
         self.add(counter)
@@ -112,6 +113,7 @@ class TrainScene(ForwardPassScene):
         self.matmul_count += 1
         color = style.GRAD_STROKE if backward else style.TEXT_COLOR
         new = caption_text(str(self.matmul_count), font_size=30, color=color)
+        new.web_role = "chrome"
         new.move_to(self.matmul_value.get_center())
         self.play(ReplacementTransform(self.matmul_value, new), run_time=0.25)
         self.matmul_value = new
@@ -126,6 +128,7 @@ class TrainScene(ForwardPassScene):
         badge = Text(label, font_size=20, color=style.GRAD_STROKE, weight="BOLD")
         badge.next_to(self.header, DOWN, buff=0.12, aligned_edge=np.array([-1.0, 0.0, 0.0]))
         badge.set_z_index(style.Z_LABEL)
+        badge.web_role = "chrome"
         anims = []
         if self.caption_mobj is not None:
             anims.append(FadeOut(self.caption_mobj))

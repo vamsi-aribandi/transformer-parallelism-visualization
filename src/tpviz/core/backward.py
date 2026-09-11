@@ -230,8 +230,6 @@ def backward_mlp(cfg: StrategyConfig, rec: LayerRecord, d_out: LTensor, layer: i
     _tag_note(s, rec, "W_in")
     steps += s
     _tag_collective_notes(steps, rec, cfg)
-    _tag_collective_notes(steps, rec, cfg)
-    _tag_collective_notes(steps, rec, cfg)
     for st in steps:
         st.backward = True
     return steps, dx
@@ -269,6 +267,7 @@ def backward_moe(cfg: StrategyConfig, rec: LayerRecord, d_out: LTensor, layer: i
     dx = LTensor("dX", ("B", "T", "D"), cfg.act_sharding, kind="grad")
     steps.append(AllToAllStep(src=dtok, out=dx, axis=axis, direction="combine",
                               layer=layer, phase=phase))
+    _tag_collective_notes(steps, rec, cfg)
     for st in steps:
         st.backward = True
     return steps, dx
@@ -338,6 +337,7 @@ def backward_attention(cfg: StrategyConfig, rec: LayerRecord, d_out: LTensor, la
     )
     _tag_note(s, rec, "W_qkv")
     steps += s
+    _tag_collective_notes(steps, rec, cfg)
     for st in steps:
         st.backward = True
     return steps, dx
