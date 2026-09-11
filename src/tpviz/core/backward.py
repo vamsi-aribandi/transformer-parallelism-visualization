@@ -53,6 +53,8 @@ class LayerRecord:
     mlp_in: LTensor | None = None  # input to the W_in matmul (MoE: routed tokens)
     tmp: LTensor | None = None  # input to the W_out matmul
     out: LTensor | None = None  # the layer's block output
+    fwd_mm: dict[str, MatMulStep] = field(default_factory=dict)  # weight name -> fwd matmul
+    fwd_attn: AttentionCoreStep | None = None
 
 
 def annotate_forward(cfg: StrategyConfig) -> tuple[list[Step], dict[int, LayerRecord]]:
@@ -61,17 +63,21 @@ def annotate_forward(cfg: StrategyConfig) -> tuple[list[Step], dict[int, LayerRe
     recs: dict[int, LayerRecord] = {la: LayerRecord() for la in range(1, cfg.n_layers + 1)}
     slot_count: dict[tuple[int, str], int] = {}
 
-    def save(t: LTensor, layer: int, phase: str) -> SaveActivationStep:
+    def save(t: LTensor, layer: int, phase: str, anchor: str, spread: int = 0
+             ) -> SaveActivationStep:
         key = (layer, phase)
         slot = slot_count.get(key, 0)
         slot_count[key] = slot + 1
-        return SaveActivationStep(t=t, slot=slot, layer=layer, phase=phase)
+        return SaveActivationStep(t=t, slot=slot, anchor=anchor, spread=spread,
+                                  layer=layer, phase=phase)
 
     for step in forward_steps(cfg):
         steps.append(step)
         rec = recs.get(step.layer)
         if isinstance(step, MatMulStep) and step.b.kind == "weight":
-            steps.append(save(step.a, step.layer, step.phase))
+            anchor = "slot0" if step.b.name in ("W_qkv", "W_in") else "slot1"
+            steps.append(save(step.a, step.layer, step.phase, anchor))
+            rec.fwd_mm[step.b.name] = step
             if step.b.name == "W_qkv":
                 rec.attn_in = step.a
             elif step.b.name == "W_o":
@@ -81,9 +87,10 @@ def annotate_forward(cfg: StrategyConfig) -> tuple[list[Step], dict[int, LayerRe
             elif step.b.name == "W_out":
                 rec.tmp = step.a
         elif isinstance(step, AttentionCoreStep):
-            for t in (step.q, step.k, step.v):
-                steps.append(save(t, step.layer, step.phase))
+            for spread, t in zip((-1, 0, 1), (step.q, step.k, step.v)):
+                steps.append(save(t, step.layer, step.phase, "core", spread))
             rec.q, rec.k, rec.v = step.q, step.k, step.v
+            rec.fwd_attn = step
         if hasattr(step, "out") and getattr(step.out, "kind", None) == "activation":
             rec.out = step.out
     return steps, recs
@@ -95,6 +102,16 @@ def _gathered_form(steps: list[Step], t: LTensor) -> LTensor:
         if isinstance(s, AllGatherStep) and s.src.name == t.name and s.src.kind == t.kind:
             t = s.out
     return t
+
+
+def _tag_note(steps: list[Step], rec: LayerRecord, weight_name: str) -> None:
+    """Attach the forward equation to a backward plan's matmul steps."""
+    fwd = rec.fwd_mm.get(weight_name)
+    if fwd is None:
+        return
+    for s in steps:
+        if isinstance(s, MatMulStep):
+            s.note_tex = fwd.tex()
 
 
 def _wt_scatter_dim(cfg: StrategyConfig, name: str) -> str | None:
@@ -113,6 +130,7 @@ def backward_mlp(cfg: StrategyConfig, rec: LayerRecord, d_out: LTensor, layer: i
         d_out, w_out.transposed(), "dTmp", "D", layer=layer, phase=phase, out_kind="grad",
         prefer_reduce_scatter=cfg.prefer_reduce_scatter,
     )
+    _tag_note(s, rec, "W_out")
     steps += s
     d_out_used = _gathered_form(s, d_out)
 
@@ -121,6 +139,7 @@ def backward_mlp(cfg: StrategyConfig, rec: LayerRecord, d_out: LTensor, layer: i
         scatter_dim=_wt_scatter_dim(cfg, "W_out"), out_kind="grad",
         prefer_reduce_scatter=cfg.prefer_reduce_scatter,
     )
+    _tag_note(s, rec, "W_out")
     steps += s
 
     steps.append(GeluStep(src=dtmp, out=dtmp, layer=layer, phase=phase,
@@ -130,6 +149,7 @@ def backward_mlp(cfg: StrategyConfig, rec: LayerRecord, d_out: LTensor, layer: i
         dtmp, w_in.transposed(), "dX", "F", layer=layer, phase=phase,
         scatter_dim="D", out_kind="grad", prefer_reduce_scatter=cfg.prefer_reduce_scatter,
     )
+    _tag_note(s, rec, "W_in")
     steps += s
     dtmp_used = _gathered_form(s, dtmp)
 
@@ -138,6 +158,7 @@ def backward_mlp(cfg: StrategyConfig, rec: LayerRecord, d_out: LTensor, layer: i
         scatter_dim=_wt_scatter_dim(cfg, "W_in"), out_kind="grad",
         prefer_reduce_scatter=cfg.prefer_reduce_scatter,
     )
+    _tag_note(s, rec, "W_in")
     steps += s
     for st in steps:
         st.backward = True
@@ -156,20 +177,22 @@ def backward_moe(cfg: StrategyConfig, rec: LayerRecord, d_out: LTensor, layer: i
     steps.append(AllToAllStep(src=d_out, out=dxe, axis=axis, direction="dispatch",
                               layer=layer, phase=phase))
 
+    note_out = rec.fwd_mm["W_out"].tex() if "W_out" in rec.fwd_mm else None
+    note_in = rec.fwd_mm["W_in"].tex() if "W_in" in rec.fwd_mm else None
     dtmp = LTensor("dTmp", ("E", "S", "F"), {"E": axis}, kind="grad")
     steps.append(MatMulStep(a=dxe, b=w_out.transposed(), out=dtmp, contract="D",
-                            layer=layer, phase=phase))
+                            layer=layer, phase=phase, note_tex=note_out))
     dw_out = LTensor("dW_out", ("E", "F", "D"), {"E": axis}, kind="grad")
     steps.append(MatMulStep(a=rec.tmp, b=dxe, out=dw_out, contract="S",
-                            layer=layer, phase=phase))
+                            layer=layer, phase=phase, note_tex=note_out))
     steps.append(GeluStep(src=dtmp, out=dtmp, layer=layer, phase=phase,
                           caption="through the gelu: dTmp ⊙ gelu′"))
     dtok = LTensor("dX", ("E", "S", "D"), {"E": axis}, kind="grad")
     steps.append(MatMulStep(a=dtmp, b=w_in.transposed(), out=dtok, contract="F",
-                            layer=layer, phase=phase))
+                            layer=layer, phase=phase, note_tex=note_in))
     dw_in = LTensor("dW_in", ("E", "D", "F"), {"E": axis}, kind="grad")
     steps.append(MatMulStep(a=rec.mlp_in, b=dtmp, out=dw_in, contract="S",
-                            layer=layer, phase=phase))
+                            layer=layer, phase=phase, note_tex=note_in))
 
     dx = LTensor("dX", ("B", "T", "D"), cfg.act_sharding, kind="grad")
     steps.append(AllToAllStep(src=dtok, out=dx, axis=axis, direction="combine",
@@ -191,6 +214,7 @@ def backward_attention(cfg: StrategyConfig, rec: LayerRecord, d_out: LTensor, la
         d_out, w_o.transposed(), "dA", "D", layer=layer, phase=phase, out_kind="grad",
         prefer_reduce_scatter=cfg.prefer_reduce_scatter,
     )
+    _tag_note(s, rec, "W_o")
     steps += s
     d_out_used = _gathered_form(s, d_out)
 
@@ -199,6 +223,7 @@ def backward_attention(cfg: StrategyConfig, rec: LayerRecord, d_out: LTensor, la
         scatter_dim=_wt_scatter_dim(cfg, "W_o"), out_kind="grad",
         prefer_reduce_scatter=cfg.prefer_reduce_scatter,
     )
+    _tag_note(s, rec, "W_o")
     steps += s
 
     # attention core backward: dA -> dQ, dK, dV (uses the saved Q, K, V)
@@ -209,7 +234,8 @@ def backward_attention(cfg: StrategyConfig, rec: LayerRecord, d_out: LTensor, la
         # every query shard contributes to every dK/dV token: partial sums
         dk = replace(rec.k.grad(), name="dK", partial=frozenset({ctx}))
         dv = replace(rec.v.grad(), name="dV", partial=frozenset({ctx}))
-        steps.append(AttentionBwdStep(da=da, dq=dq, dk=dk, dv=dv, layer=layer, phase=phase))
+        steps.append(AttentionBwdStep(da=da, dq=dq, dk=dk, dv=dv, layer=layer, phase=phase,
+                                      note_tex=rec.fwd_attn.tex() if rec.fwd_attn else None))
         dk_res, dv_res = dk.scattered("T", ctx), dv.scattered("T", ctx)
         steps.append(ReduceScatterStep(src=dk, out=dk_res, axis=ctx, scatter_dim="T",
                                        layer=layer, phase=phase))
@@ -219,7 +245,8 @@ def backward_attention(cfg: StrategyConfig, rec: LayerRecord, d_out: LTensor, la
     else:
         dk = replace(rec.k.grad(), name="dK")
         dv = replace(rec.v.grad(), name="dV")
-        steps.append(AttentionBwdStep(da=da, dq=dq, dk=dk, dv=dv, layer=layer, phase=phase))
+        steps.append(AttentionBwdStep(da=da, dq=dq, dk=dk, dv=dv, layer=layer, phase=phase,
+                                      note_tex=rec.fwd_attn.tex() if rec.fwd_attn else None))
 
     dqkv = replace(dq, name="dQKV")
     steps.append(MergeQKVStep(q=dq, k=dk, v=dv, out=dqkv, layer=layer, phase=phase))
@@ -228,6 +255,7 @@ def backward_attention(cfg: StrategyConfig, rec: LayerRecord, d_out: LTensor, la
         dqkv, w_qkv.transposed(), "dX", "H", layer=layer, phase=phase,
         scatter_dim="D", out_kind="grad", prefer_reduce_scatter=cfg.prefer_reduce_scatter,
     )
+    _tag_note(s, rec, "W_qkv")
     steps += s
     dqkv_used = _gathered_form(s, dqkv)
 
@@ -236,6 +264,7 @@ def backward_attention(cfg: StrategyConfig, rec: LayerRecord, d_out: LTensor, la
         scatter_dim=_wt_scatter_dim(cfg, "W_qkv"), out_kind="grad",
         prefer_reduce_scatter=cfg.prefer_reduce_scatter,
     )
+    _tag_note(s, rec, "W_qkv")
     steps += s
     for st in steps:
         st.backward = True

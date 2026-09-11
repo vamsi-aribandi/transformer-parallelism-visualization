@@ -77,6 +77,8 @@ def default_caption(step: Step) -> str | None:
             return "Gather the full weight just in time — use it, then discard it"
         if step.src.kind == "kv":
             return "Attention needs every token: gather K and V across shards"
+        if step.src.kind == "grad":
+            return "Gather the sharded gradient before the matmul"
         return "Gather the sharded activations before the matmul"
     if isinstance(step, ReduceScatterStep):
         return "Unreduced partial sums resolve — each device keeps one slice"

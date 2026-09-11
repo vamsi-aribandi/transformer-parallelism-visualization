@@ -228,12 +228,18 @@ class ModelCanvas(VGroup):
         x = x0 + WEIGHT_SLOT_FRACS[s.phase][slot] * (x1 - x0)
         return np.array([x, self.lanes[lane].weight_y(), 0.0])
 
-    def stash_slot(self, key: str, lane: int, i: int) -> np.ndarray:
-        """Where saved activations park: a row along the lane's bottom edge,
-        inside the station."""
-        x0, _ = self.station_span(key)
+    def stash_slot(self, key: str, lane: int, anchor: str, spread: int = 0) -> np.ndarray:
+        """Where a saved activation parks: on the lane's bottom edge, directly
+        under the weight whose backward (dW) matmul will consume it.
+        anchor: "slot0" | "slot1" (weight fixtures) or "core" (Q/K/V, spread apart).
+        """
+        if anchor in ("slot0", "slot1"):
+            x = self.weight_anchor(key, 0 if anchor == "slot0" else 1, lane)[0]
+        else:
+            x = self.anchor(key, anchor, lane)[0]
+        x += spread * 0.36
         rect = self.lanes[lane].rect
-        return np.array([x0 + 0.22 + i * 0.34, rect.get_bottom()[1] + 0.14, 0.0])
+        return np.array([x, rect.get_bottom()[1] + 0.15, 0.0])
 
     def grad_anchor(self, key: str, slot: int, lane: int) -> np.ndarray:
         """Where a weight-gradient rect sits: a 'shadow' offset from its weight."""

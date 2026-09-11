@@ -170,8 +170,10 @@ class TrainScene(ForwardPassScene):
             if vis.width > 0.30:
                 vis.scale(0.30 / vis.width)
             vis.set_opacity(style.SAVED_OPACITY)
-            vis.move_to(self.canvas.stash_slot(key, i, step.slot))
-            minis.append(VGroup(vis))
+            chip = caption_text(step.t.name, font_size=12, color=style.MUTED_TEXT)
+            g = VGroup(vis, chip.next_to(vis, DOWN, buff=0.03))
+            g.move_to(self.canvas.stash_slot(key, i, step.anchor, step.spread))
+            minis.append(g)
         self.stash[(key, step.t.name)] = minis
         if not self._saved_note_shown:
             self._saved_note_shown = True
@@ -219,7 +221,7 @@ class TrainScene(ForwardPassScene):
                 g.animate.move_to(self.canvas.anchor(key, anchor_name, i))
                 for i, g in enumerate(acts)
             ],
-            self.strip.show(step.tex(), color=style.GRAD_STROKE),
+            self.strip.show(step.tex(), color=style.GRAD_STROKE, note=step.note_tex),
             run_time=self.rt(0.45),
         )
         out_anchor = BWD_NEXT_ANCHOR[(step.phase, slot)]
@@ -238,13 +240,19 @@ class TrainScene(ForwardPassScene):
         w_name = step.out.name[1:]  # dW_out -> W_out
         slot = 0 if w_name in ("W_qkv", "W_in") else 1
         stash = self.stash.get((key, step.a.name), [])
-        outs = [
-            self.build_tensor_vis(step.out, i, at=self.canvas.grad_anchor(key, slot, i))
-            for i in range(self.n_lanes())
-        ]
+        outs = []
+        for i in range(self.n_lanes()):
+            g = self.build_tensor_vis(step.out, i, at=self.canvas.grad_anchor(key, slot, i))
+            chip = caption_text(step.out.name, font_size=13, color=style.GRAD_STROKE)
+            chip.next_to(g, DOWN, buff=0.03)
+            g.add(chip)
+            outs.append(g)
         for o in outs:
             o.set_z_index(style.Z_TENSOR - 1)
-        self.play(self.strip.show(step.tex(), color=style.GRAD_STROKE), run_time=self.rt(0.4))
+        self.play(
+            self.strip.show(step.tex(), color=style.GRAD_STROKE, note=step.note_tex),
+            run_time=self.rt(0.4),
+        )
         anims = [Indicate(m, scale_factor=1.4, color=style.ACT_STROKE) for m in stash]
         anims += [
             Indicate(w, scale_factor=1.06, color=style.WEIGHT_STROKE)
@@ -279,7 +287,10 @@ class TrainScene(ForwardPassScene):
         for name in ("Q", "K", "V"):
             for m in self.stash.get((key, name), []):
                 stash_pulses.append(Indicate(m, scale_factor=1.4, color=style.KV_STROKE))
-        self.play(self.strip.show(step.tex(), color=style.GRAD_STROKE), run_time=self.rt(0.4))
+        self.play(
+            self.strip.show(step.tex(), color=style.GRAD_STROKE, note=step.note_tex),
+            run_time=self.rt(0.4),
+        )
         self.play(*anims, *stash_pulses, run_time=self.rt(1.0))
         self.acts.update(per_name)
 

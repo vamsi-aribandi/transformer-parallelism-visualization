@@ -18,6 +18,7 @@ class Step:
     caption: str | None = None
     microbatch: int | None = None
     backward: bool = False  # backward-pass step: flow runs right -> left
+    note_tex: str | None = None  # e.g. the forward equation this backward step derives from
 
 
 @dataclass(kw_only=True)
@@ -137,10 +138,16 @@ class AnnotateStep(Step):
 
 @dataclass(kw_only=True)
 class SaveActivationStep(Step):
-    """Forward: stash a tensor that the backward pass will need (memory cost)."""
+    """Forward: stash a tensor that the backward pass will need (memory cost).
+
+    The stash parks directly under the weight whose dW matmul will consume it
+    (`anchor` = that weight's station anchor), so the correspondence between a
+    saved activation and its operation stays visible."""
 
     t: LTensor
-    slot: int = 0  # stash position within the station
+    slot: int = 0  # kept for ordering
+    anchor: str = "entry"  # station anchor to park under ("w1" | "w2" | "core")
+    spread: int = 0  # lateral offset in stash widths (Q/K/V sit at -1, 0, +1)
 
 
 @dataclass(kw_only=True)
