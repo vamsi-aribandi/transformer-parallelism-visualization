@@ -117,7 +117,7 @@ class PPTrainScene(PPScene):
             for p in tick_sends:
                 deck = self.stage_deck[p.src_stage]
                 self.stage_deck[p.src_stage] = None
-                self.play(self.strip.show(p.tex(), color=style.GRAD_STROKE), run_time=0.3)
+                self.play(self.strip.show(p.tex(), color=style.GRAD_STROKE, note=p.note_tex), run_time=0.3)
                 self.play(
                     deck.animate(path_arc=-0.35).move_to(
                         self.canvas.anchor(self._mlp_key(p.dst_stage), "exit", p.dst_stage)

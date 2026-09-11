@@ -73,3 +73,8 @@ Linear, detailed log of work. Newest entries at the bottom. See [STATE.md](STATE
   - matmul counter beside the collectives counter; train summary card: fwd vs bwd matmuls + per-pass collectives + "backward ≈ 2× forward".
   - EP refactored into `MoETokenMixin` (fwd + bwd token crossflys, mirrored columns for backward); PP train: forward drain then rose gradient microbatches flowing back with UP-LEFT P2P hops and double-width rose Gantt cells (`gantt_fill_bwd`), smaller cells (0.42) to fit the 15-tick timeline.
   - Makefile: `lq-train-all` (480p, `--disable_caching`); hq-all deliberately unchanged.
+
+## 2026-09-11 — Session 3: duality notes everywhere + web player begins
+
+- Re-rendered all six train scenes with the clarity fixes; verified per-strategy: DP attention-backward cites `from forward: Attn(Q,K,V)→A`; FSDP re-gathers cite the identical forward gather; CP dK/dV ReduceScatters cite the forward K/V AllGathers; EP grad AllToAlls cite the opposite-direction forward AllToAll; PP backward P2P sends cite the forward handoff (`dual of forward's Send: In stage 0→1`).
+- Started v4: interactive web player (see STATE.md / plan). Architecture: RECORD the real manim scenes (RecorderMixin overrides play/wait, samples animations at 5 alphas via manim's own compile/interpolate machinery, scene-membership diffs give spawn/despawn) → quantized keyframe JSON + deduped LaTeX glyph atlas → dependency-free JS player. First recorder run on DPScene: 34.4s timeline, 234 semantic objects, 15 steps, zero unserialized mobjects.

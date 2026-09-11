@@ -390,9 +390,12 @@ def pipeline_train_steps(cfg: StrategyConfig) -> list[Step]:
                                  microbatch=m, backward=True)
             )
             if s > 0:
+                fwd_send = P2PSendStep(tensor=acts, src_stage=s - 1, dst_stage=s, tick=0,
+                                       layer=s, phase="pipeline", microbatch=m)
                 events.append(
                     P2PSendStep(tensor=grads, src_stage=s, dst_stage=s - 1, tick=tick + 1,
-                                layer=s + 1, phase="pipeline", microbatch=m, backward=True)
+                                layer=s + 1, phase="pipeline", microbatch=m, backward=True,
+                                note_tex=DUAL_FWD + fwd_send.tex())
                 )
     return events
 
