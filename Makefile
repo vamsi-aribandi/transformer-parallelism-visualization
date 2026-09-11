@@ -42,7 +42,7 @@ lq-train-all:
 
 # ---- interactive web player ----
 web:
-	uv run python -m tpviz.web.export --only tp_fwd,tp_train
+	uv run python -m tpviz.web.export --only tp_train
 
 web-all:
 	uv run python -m tpviz.web.export
@@ -52,7 +52,7 @@ CHROME = /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
 web-qa:
 	mkdir -p qa/web
 	"$(CHROME)" --headless --disable-gpu --window-size=1600,1000 \
-		--screenshot=qa/web/$(S)_$(M)_t$(T).png --virtual-time-budget=4000 \
-		"file://$(PWD)/web/dist/index.html#s=$(S)&m=$(M)&t=$(T)&still=1"
+		--screenshot=qa/web/step$(T).png --virtual-time-budget=4000 \
+		"file://$(PWD)/web/dist/index.html#step=$(T)&theme=dark"
 
 .PHONY: web web-all web-qa

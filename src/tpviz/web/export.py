@@ -84,16 +84,12 @@ def build_document(only: list[str] | None = None) -> dict:
 
 
 def build_page(doc: dict) -> str | None:
-    template = WEB / "template.html"
+    template = WEB / "article.html"
     if not template.exists():
         return None
     html = template.read_text()
-    css = (WEB / "style.css").read_text() if (WEB / "style.css").exists() else ""
-    js_dir = WEB / "js"
-    order = ["data.js", "draw.js", "player.js", "program.js", "tooltip.js", "transport.js", "main.js"]
-    js = "\n".join(
-        (js_dir / f).read_text() for f in order if (js_dir / f).exists()
-    )
+    css = (WEB / "style.css").read_text()
+    js = (WEB / "tpviz.js").read_text()
     payload = json.dumps(doc, separators=(",", ":")).replace("</", "<\\/")
     html = html.replace("<!--DATA-->", f'<script type="application/json" id="tpviz-data">{payload}</script>')
     html = html.replace("<!--CSS-->", f"<style>{css}</style>")
