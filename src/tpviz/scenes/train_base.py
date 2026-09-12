@@ -179,7 +179,9 @@ class TrainScene(ForwardPassScene):
             if vis.width > 0.24:
                 vis.scale(0.24 / vis.width)
             vis.set_opacity(style.SAVED_OPACITY)
+            vis.web_save = True
             chip = caption_text(step.t.name, font_size=11, color=style.MUTED_TEXT)
+            chip.web_save = True
             g = VGroup(vis, chip.next_to(vis, DOWN, buff=0.03))
             g.move_to(self.canvas.stash_slot(key, i, step.anchor, step.spread))
             minis.append(g)

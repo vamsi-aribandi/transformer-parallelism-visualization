@@ -99,3 +99,9 @@ Linear, detailed log of work. Newest entries at the bottom. See [STATE.md](STATE
 - Program moved beside the canvas (grid: canvas+stepper left, program right; stacks on narrow); the bottom readout is gone — the program auto-centers and expands the current entry with its caption, and backward entries show their forward citation plus a "jump to that forward step" link (`fwdStep` computed by matching note_tex to forward equations).
 - Full Gruvbox theming conforming to vamsi-aribandi.github.io (light #fbf1c7/#af3a03, dark #282828/#fe8019): article chrome AND the canvas now both theme (canvas via --cv-* vars; tensor fills are neutral gruvbox tones shared across themes, strokes bright-in-dark/faded-in-light; hexes mapped to tokens at export via HEX2TOK).
 - Bugs from headless QA: `stop()` before the stepper exists (guard), id-reuse pin from v5 still good, `Text.get_color()` family-fill fix carried.
+
+**v7: figure interaction polish**
+- "initial state" entry at the top of the program (click → base state); program auto-scroll now rect-based centering (works upward too — offsetTop was measured against the wrong ancestor and over-scrolled).
+- Forward mode truly hides saved activations: stash minis are now marked at the SOURCE (`web_save` attr → `sv` flag → `saveObjs`) instead of inferred from spawn-boundary attribution, which missed half of them (spawn windows straddle step boundaries).
+- Program subtext trimmed to just the forward citation (+ jump link) on backward steps; section headings are sticky within the list.
+- Collective animations restored to the real recorded choreography: beats now carry spawn-time states (flight copies fly from their SOURCE lane instead of fading in at the destination) and interior path samples for arced crossflies (AllGather/ReduceScatter/AllToAll arcs replay faithfully in play mode).

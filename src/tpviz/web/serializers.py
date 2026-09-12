@@ -156,4 +156,6 @@ def serialize(m: Mobject) -> dict | None:
     spec["o0"] = st["o"]
     spec["x0"], spec["y0"] = st["x"], st["y"]
     spec["z"] = int(getattr(m, "z_index", 0) or 0)
+    if getattr(m, "web_save", False):
+        spec["sv"] = 1
     return spec

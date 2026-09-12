@@ -418,6 +418,11 @@
     buildProgram() {
       this.programList.textContent = "";
       this.progEntries = [];
+      this.startEntry = document.createElement("div");
+      this.startEntry.className = "tpv-prog-entry tpv-prog-start";
+      this.startEntry.innerHTML = `<div class="tpv-prog-line">initial state</div>`;
+      this.startEntry.addEventListener("click", () => { this.stop(); this.show(-1); });
+      this.programList.appendChild(this.startEntry);
       let sectionKey = "";
       this.visible.forEach((real, vi) => {
         const st = this.tl.steps[real];
@@ -444,12 +449,6 @@
 
         const sub = document.createElement("div");
         sub.className = "tpv-prog-sub";
-        if (st.cap) {
-          const cap = document.createElement("div");
-          cap.className = "tpv-prog-cap";
-          cap.textContent = st.cap;
-          sub.appendChild(cap);
-        }
         if (st.noteh) {
           const note = document.createElement("div");
           note.className = "tpv-prog-note meq";
@@ -512,11 +511,14 @@
         e.classList.toggle("current", k === vi);
         e.classList.toggle("done", k < vi);
       });
-      const cur = this.progEntries[vi];
+      if (this.startEntry) this.startEntry.classList.toggle("current", vi === -1);
+      const cur = vi === -1 ? this.startEntry : this.progEntries[vi];
       if (cur && performance.now() > (this._noScrollUntil || 0)) {
         const list = this.programList;
-        const target = cur.offsetTop - list.clientHeight / 2 + cur.clientHeight / 2;
-        list.scrollTo({ top: target, behavior: "smooth" });
+        const lr = list.getBoundingClientRect();
+        const er = cur.getBoundingClientRect();
+        const target = list.scrollTop + (er.top - lr.top) - (list.clientHeight - er.height) / 2;
+        list.scrollTo({ top: Math.max(0, target), behavior: "smooth" });
       }
       this.posEl.textContent = `${vi + 1} / ${this.visible.length}`;
       this.playBtn.textContent = this.playing ? "❚❚" : "▶";
@@ -559,16 +561,24 @@
       const live = new Map();
       for (const beat of step.beats) {
         if (this._token !== token) return;
+        const spawnAt = new Map((beat.sp || []).map((r) => [r[0], r.slice(1)]));
         const moves = [];
         for (const row of beat.ch) {
           const [obj, x, y, w, o] = row;
+          const path = row[5]; // interior (x, y) samples for arced flights
           if (this.mode === "fwd" && this.saveObjs.has(obj)) continue;
           const el = this.els[obj];
           const prev = live.get(obj) || from.st[obj];
           const spawning = beat.in.includes(obj) || (!from.alive[obj] && !live.has(obj));
-          const start = spawning || !prev ? [x, y, w, 0] : prev;
+          let start;
+          if (spawning) {
+            const sp = spawnAt.get(obj);
+            start = sp ? [sp[0], sp[1], sp[2], 0] : [x, y, w, 0];
+          } else {
+            start = prev || [x, y, w, 0];
+          }
           el.style.display = "";
-          moves.push({ obj, el, start, end: [x, y, w, o] });
+          moves.push({ obj, el, start, end: [x, y, w, o], path });
           live.set(obj, [x, y, w, o]);
         }
         const outs = beat.out.map((obj) => this.els[obj]);
@@ -586,6 +596,16 @@
           const p = ease(u);
           for (const m of moves) {
             const v = m.start.map((a, k) => a + (m.end[k] - a) * p);
+            if (m.path) {
+              const pts = [[m.start[0], m.start[1]]];
+              for (let k = 0; k < m.path.length; k += 2) pts.push([m.path[k], m.path[k + 1]]);
+              pts.push([m.end[0], m.end[1]]);
+              const f = p * (pts.length - 1);
+              const seg = Math.min(Math.floor(f), pts.length - 2);
+              const t = f - seg;
+              v[0] = pts[seg][0] + (pts[seg + 1][0] - pts[seg][0]) * t;
+              v[1] = pts[seg][1] + (pts[seg + 1][1] - pts[seg][1]) * t;
+            }
             this.applyState(m.obj, v, true);
           }
           for (const el of outs) el.setAttribute("opacity", (1 - p).toFixed(3));

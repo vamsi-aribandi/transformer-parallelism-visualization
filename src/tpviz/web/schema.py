@@ -60,6 +60,41 @@ def _q(v: float) -> int:
     return round(v * CS)
 
 
+def _arc_samples(o, a: float, b: float) -> list | None:
+    """Interior (x, y) samples for a play interval whose path visibly bends
+    (collective crossflies with path_arc) — restores the arc in play mode."""
+    xs = ys = None
+    for seg in o.tracks.get("x", []):
+        if abs(seg[0] - a) < 1e-6 and abs(seg[1] - b) < 1e-6:
+            xs = seg[2]
+    for seg in o.tracks.get("y", []):
+        if abs(seg[0] - a) < 1e-6 and abs(seg[1] - b) < 1e-6:
+            ys = seg[2]
+    if not xs and not ys:
+        return None
+    n = max(len(xs) if xs else 0, len(ys) if ys else 0)
+    if n < 3:
+        return None
+    xs = xs or [o.spec["x0"]] * n
+    ys = ys or [o.spec["y0"]] * n
+    if len(xs) != n or len(ys) != n:
+        return None
+    dev = 0.0
+    for k in range(1, n - 1):
+        u = k / (n - 1)
+        dev = max(
+            dev,
+            abs(xs[k] - (xs[0] + (xs[-1] - xs[0]) * u)),
+            abs(ys[k] - (ys[0] + (ys[-1] - ys[0]) * u)),
+        )
+    if dev < 0.06:
+        return None
+    out = []
+    for k in range(1, n - 1):
+        out += [_q(xs[k]), _q(ys[k])]
+    return out
+
+
 def _sample(segs: list, t: float, fallback: float) -> float:
     """Value of a track at time t (same math as the old player, python-side)."""
     best = None
@@ -141,6 +176,7 @@ class DocumentBuilder:
                     spec[k] = _tok(spec[k])
             entry.update(spec)
             objects.append(entry)
+        save_objs = sorted(i for i, o in enumerate(objects) if o.pop("sv", None))
 
         alive = {i: False for i in range(len(keep))}
         state = {}
@@ -185,15 +221,20 @@ class DocumentBuilder:
             for (a, b) in play_ivals:
                 if a < window[0] or b > window[1] + 1e-6:
                     continue
-                ch, born, gone = [], [], []
+                ch, born, gone, sp = [], [], [], []
                 for i, o in enumerate(keep):
                     now = o.t0 <= b and (o.t1 > b or o.t1 >= t_end)
                     if now:
                         st = obj_state(o, b)
                         if not live[i]:
                             born.append(i)
+                            sp.append([i, *obj_state(o, a)])
                         if snapshot.get(i) != st or not live[i]:
-                            ch.append([i, *st])
+                            row = [i, *st]
+                            arc = _arc_samples(o, a, b)
+                            if arc:
+                                row.append(arc)
+                            ch.append(row)
                             snapshot[i] = st
                     elif live[i]:
                         gone.append(i)
@@ -201,7 +242,7 @@ class DocumentBuilder:
                 if ch or born or gone:
                     beats.append({
                         "d": max(150, min(900, round((b - a) * 10))),  # cs -> ms
-                        "ch": ch, "in": born, "out": gone,
+                        "ch": ch, "in": born, "out": gone, "sp": sp,
                     })
             diff, born, gone = boundary(seg_step.t1)
             coll += e.pop("comm")
@@ -213,9 +254,6 @@ class DocumentBuilder:
             entries.append(e)
             prev_end = seg_step.t1
 
-        save_objs = sorted({
-            i for e in entries if e.get("save") for i in e["in"]
-        })
         fwd_tex = {}
         for i, seg_step in enumerate(rec.steps):
             st = seg_step.step
