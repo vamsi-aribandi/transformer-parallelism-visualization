@@ -282,6 +282,7 @@
       this.meta = (DOC.meta.strategies || {})[strategy] || {};
       this.mode = "fwd";
       this.playing = false;
+      this.speed = 1; // recorded pacing is "2x"; default plays at half that
       this._token = 0;
       this.saveObjs = new Set(this.tl.saveObjs || []);
 
@@ -328,6 +329,10 @@
           <button data-mode="fwd" class="active" role="tab">Forward</button>
           <button data-mode="train" role="tab">+ Backward</button>
         </div>
+        <label class="tpv-speed" title="play speed">
+          <input type="range" min="0.1" max="2" step="0.1" value="1">
+          <span class="tpv-speed-val">1.0×</span>
+        </label>
         <span class="tpv-mesh meq"></span>`;
       this.appendChild(head);
       if (this.meta.meshh) head.querySelector(".tpv-mesh").innerHTML = this.meta.meshh;
@@ -376,6 +381,12 @@
       this.posEl = head.querySelector(".tpv-pos");
       this.playBtn = head.querySelector(".tpv-play");
       this.modeBtns = head.querySelectorAll(".tpv-modes button");
+      const speedInput = head.querySelector(".tpv-speed input");
+      const speedVal = head.querySelector(".tpv-speed-val");
+      speedInput.addEventListener("input", () => {
+        this.speed = parseFloat(speedInput.value);
+        speedVal.textContent = `${this.speed.toFixed(1)}×`;
+      });
 
       this.tabIndex = 0;
       this.addEventListener("keydown", (ev) => {
@@ -544,7 +555,7 @@
         await this.playStep(real, token);
         if (this._token !== token) return;
         this.show(vi);
-        await new Promise((r) => setTimeout(r, 240));
+        await new Promise((r) => setTimeout(r, 240 * (2 / this.speed)));
       }
       if (this._token === token) { this.playing = false; this.updateChrome(); }
     }
@@ -582,7 +593,7 @@
           live.set(obj, [x, y, w, o]);
         }
         const outs = beat.out.map((obj) => this.els[obj]);
-        await this.tween(moves, outs, beat.d, token);
+        await this.tween(moves, outs, beat.d * (2 / this.speed), token);
         for (const el of outs) el.style.display = "none";
       }
     }
