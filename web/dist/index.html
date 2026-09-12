@@ -980,14 +980,18 @@ figcaption {
       el.setAttribute("opacity", (o / 100).toFixed(3));
     }
 
+    applyBoundary(idx) {
+      const s = this.states[idx];
+      for (let k = 0; k < this.els.length; k++) {
+        this.applyState(k, s.st[k] || [0, 0, 100, 0], !!s.alive[k] && !!s.st[k]);
+      }
+    }
+
     show(vi) {
       vi = Math.max(-1, Math.min(vi, this.visible.length - 1));
       this.cur = vi;
       const real = vi < 0 ? -1 : this.visible[vi];
-      const s = this.states[real + 1];
-      for (let k = 0; k < this.els.length; k++) {
-        this.applyState(k, s.st[k] || [0, 0, 100, 0], !!s.alive[k] && !!s.st[k]);
-      }
+      this.applyBoundary(real + 1);
       this.updateChrome();
     }
 
@@ -1027,14 +1031,13 @@ figcaption {
         const prevReal = vi === 0 ? -1 : this.visible[vi - 1];
         if (real - prevReal > 1) {
           // silently absorb skipped (hidden) steps between the two
-          const s = this.states[real];
-          for (let k = 0; k < this.els.length; k++) {
-            this.applyState(k, s.st[k] || [0, 0, 100, 0], !!s.alive[k] && !!s.st[k]);
-          }
+          this.applyBoundary(real);
         }
+        this.cur = vi;          // highlight the op we are ABOUT to animate
+        this.updateChrome();
         await this.playStep(real, token);
         if (this._token !== token) return;
-        this.show(vi);
+        this.applyBoundary(real + 1); // exact end state, highlight unchanged
         await new Promise((r) => setTimeout(r, 240 * (2 / this.speed)));
       }
       if (this._token === token) { this.playing = false; this.updateChrome(); }
