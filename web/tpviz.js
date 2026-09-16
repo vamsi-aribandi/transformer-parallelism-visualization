@@ -13,7 +13,7 @@
   const FRAME_W = DOC.frame[0], FRAME_H = DOC.frame[1];
   const SX = (v) => v + FRAME_W / 2;
   const SY = (v) => FRAME_H / 2 - v;
-  const VIEWBOX = "0 116 1422 600";
+  const VIEWBOX = "0 116 1422 662";
 
   const TOKENS = new Set([
     "text", "muted", "accent", "comm", "good", "act", "actS", "wt", "wtS",
@@ -346,6 +346,7 @@
       this.appendChild(wrap);
 
       this.scene = svgEl("g", {}, this.svg);
+      this.svg.appendChild(this.dimLegend());
       this.els = new Array(this.tl.objects.length);
       this.tl.objects
         .map((spec, i) => ({ spec, i }))
@@ -395,6 +396,45 @@
         else if (ev.code === "Space") { ev.preventDefault(); this.playing ? this.stop() : this.play(); }
       });
       this.initTooltip(wrap);
+    }
+
+    /* A small annotated tensor: what the amber decks are made of. */
+    dimLegend() {
+      const g = document.createElementNS(NS, "g");
+      g.setAttribute("transform", "translate(160, 706)");
+      g.setAttribute("class", "tpv-dim-legend");
+      const W = 58, H = 36, DX = 8, DY = 7, N = 3;
+      for (let i = N - 1; i >= 0; i--) {
+        svgEl("rect", {
+          x: i * DX, y: -i * DY, width: W, height: H,
+          fill: "var(--cv-act)", "fill-opacity": i === 0 ? 0.85 : 0.4,
+          stroke: "var(--cv-actS)", "stroke-opacity": i === 0 ? 1 : 0.5,
+          "stroke-width": 1.4,
+        }, g);
+      }
+      const arrow = (x1, y1, x2, y2) => {
+        svgEl("line", { x1, y1, x2, y2, stroke: "var(--cv-muted)", "stroke-width": 1.4 }, g);
+        const ang = Math.atan2(y2 - y1, x2 - x1);
+        const tip = (a) => `${x2 - 7 * Math.cos(ang - a)},${y2 - 7 * Math.sin(ang - a)}`;
+        svgEl("path", { d: `M${x2},${y2} L${tip(0.42)} L${tip(-0.42)} Z`, fill: "var(--cv-muted)" }, g);
+      };
+      const label = (x, y, sym, rest, anchor = "start") => {
+        const t = svgEl("text", {
+          x, y, "text-anchor": anchor, "dominant-baseline": "central",
+          "font-size": 14, fill: "var(--cv-muted)",
+        }, g);
+        const b = svgEl("tspan", { "font-style": "italic", fill: "var(--cv-text)" }, t);
+        b.textContent = sym;
+        const r = svgEl("tspan", {}, t);
+        r.textContent = ` ${rest}`;
+      };
+      arrow(0, H + 12, W, H + 12);                       // D: width
+      label(W + 12, H + 12, "D", "model dimension");
+      arrow(-10, H, -10, 0);                             // T: height
+      label(-18, H / 2, "T", "sequence", "end");
+      arrow(W + 4, H - 4, W + 4 + (N - 1) * DX + 8, H - 4 - (N - 1) * DY - 8); // B: depth
+      label(W + (N - 1) * DX + 20, H - (N - 1) * DY - 16, "B", "batch");
+      return g;
     }
 
     /* ------------------------------------------------------ mode + lists */

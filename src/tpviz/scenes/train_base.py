@@ -144,8 +144,10 @@ class TrainScene(ForwardPassScene):
             anims.append(FadeIn(hl))
         else:
             anims.append(self.highlight.animate.move_to(hl.get_center()))
-        # gradients arrive from the RIGHT
-        for vis_list in self.acts.values():
+        # gradients arrive from the RIGHT (weight-grad shadows stay at their weights)
+        for name, vis_list in self.acts.items():
+            if name.startswith("dW"):
+                continue
             for i, g in enumerate(vis_list):
                 anims.append(g.animate.move_to(self.canvas.anchor(key, "exit", i)))
         self.play(*anims, run_time=self.rt(0.6))
@@ -182,6 +184,7 @@ class TrainScene(ForwardPassScene):
             vis.web_save = True
             chip = caption_text(step.t.name, font_size=11, color=style.MUTED_TEXT)
             chip.web_save = True
+            chip.web_role = "chip"
             g = VGroup(vis, chip.next_to(vis, DOWN, buff=0.03))
             g.move_to(self.canvas.stash_slot(key, i, step.anchor, step.spread))
             minis.append(g)
@@ -280,6 +283,7 @@ class TrainScene(ForwardPassScene):
             for t in (step.dq, step.dk, step.dv):
                 vis = ActivationDeck(t, self.cfg.mesh, device=i, scale=MINI_SCALE)
                 chip = caption_text(t.name, font_size=13, color=style.GRAD_STROKE)
+                chip.web_role = "chip"
                 chip.next_to(vis, DOWN, buff=0.05)
                 minis.append(VGroup(vis, chip))
             row = VGroup(*minis).arrange(np.array([1.0, 0.0, 0.0]), buff=0.14, aligned_edge=UP)

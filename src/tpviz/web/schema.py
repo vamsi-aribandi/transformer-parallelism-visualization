@@ -241,7 +241,7 @@ class DocumentBuilder:
                     live[i] = now
                 if ch or born or gone:
                     beats.append({
-                        "d": max(150, min(900, round((b - a) * 10))),  # cs -> ms
+                        "d": max(150, min(1200, round((b - a) * 1000))),  # seconds -> ms
                         "ch": ch, "in": born, "out": gone, "sp": sp,
                     })
             diff, born, gone = boundary(seg_step.t1)

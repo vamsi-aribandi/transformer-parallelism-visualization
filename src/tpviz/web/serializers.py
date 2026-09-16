@@ -43,7 +43,7 @@ def _hex(c) -> str:
 
 
 def iter_units(m: Mobject) -> Iterator[Mobject]:
-    if getattr(m, "web_role", None) in ("counter", "chrome"):
+    if getattr(m, "web_role", None) in ("counter", "chrome", "chip"):
         return
     if isinstance(m, _UNIT_TYPES):
         yield m

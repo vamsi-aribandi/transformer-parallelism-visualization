@@ -312,7 +312,9 @@ class ForwardPassScene(Scene):
             anims.append(self.highlight.animate.move_to(hl.get_center()))
 
         # slide every live activation to the new station's entry
-        for vis_list in self.acts.values():
+        for name, vis_list in self.acts.items():
+            if name.startswith("dW"):
+                continue
             for i, g in enumerate(vis_list):
                 anims.append(g.animate.move_to(self.canvas.anchor(key, "entry", i)))
         self.play(*anims, run_time=self.rt(0.6))
@@ -384,6 +386,7 @@ class ForwardPassScene(Scene):
             for t in (step.q, step.k, step.v):
                 vis = ActivationDeck(t, self.cfg.mesh, device=i, scale=MINI_SCALE)
                 chip = caption_text(t.name, font_size=13, color=style.TENSOR_STROKE[t.kind])
+                chip.web_role = "chip"
                 chip.next_to(vis, DOWN, buff=0.05)
                 minis.append(VGroup(vis, chip))
             row = VGroup(*minis).arrange(RIGHT, buff=0.14, aligned_edge=UP)
