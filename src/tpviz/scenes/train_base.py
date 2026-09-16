@@ -158,6 +158,7 @@ class TrainScene(ForwardPassScene):
             vis = WeightRect(t, self.cfg.mesh, device=lane, scale=FIXTURE_SCALE * 0.95)
             # name chip ON the rect: no free vertical space around the weight track
             chip = caption_text(t.name, font_size=11, color=style.TEXT_COLOR)
+            chip.web_role = "chip"
             if chip.width > vis.width * 1.15:
                 chip.scale(vis.width * 1.15 / chip.width)
             chip.move_to(vis.get_center())

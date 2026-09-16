@@ -13,7 +13,7 @@
   const FRAME_W = DOC.frame[0], FRAME_H = DOC.frame[1];
   const SX = (v) => v + FRAME_W / 2;
   const SY = (v) => FRAME_H / 2 - v;
-  const VIEWBOX = "0 116 1422 662";
+  const VIEWBOX = "0 116 1422 700";
 
   const TOKENS = new Set([
     "text", "muted", "accent", "comm", "good", "act", "actS", "wt", "wtS",
@@ -401,7 +401,7 @@
     /* A small annotated tensor: what the amber decks are made of. */
     dimLegend() {
       const g = document.createElementNS(NS, "g");
-      g.setAttribute("transform", "translate(160, 706)");
+      g.setAttribute("transform", "translate(640, 748)");
       g.setAttribute("class", "tpv-dim-legend");
       const W = 58, H = 36, DX = 8, DY = 7, N = 3;
       for (let i = N - 1; i >= 0; i--) {
