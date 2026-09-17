@@ -1248,7 +1248,7 @@ figcaption {
   /* ---------------------------- ring-collective algorithm inset ---------- */
   const RING_TITLES = {
     AllGather: "how it runs: bidirectional ring AllGather — each shard splits in half and circulates both ways; every device keeps a copy as it passes",
-    ReduceScatter: "how it runs: bidirectional ring ReduceScatter — partial sums travel toward their owner, absorbing each device's contribution on the way",
+    ReduceScatter: "how it runs: bidirectional ring ReduceScatter — one running sum per chunk circles the ring (half clockwise, half counter); every node it passes adds its contribution",
     AllReduce: "how it runs: ReduceScatter, then AllGather — reduce toward owners, then circulate the results",
     AllToAll: "how it runs: ring AllToAll — every chunk hops the shortest way around to its destination device",
     P2PSend: "how it runs: a single point-to-point send between neighboring stages",
@@ -1308,6 +1308,7 @@ figcaption {
           "stroke-opacity": 0.25, "stroke-width": 0.8,
         }, svg);
       const move = (el, x1, y1, x2, y2, dur) => new Promise((res) => {
+        el.setAttribute("transform", `translate(${x1},${y1})`); // no origin flash
         const t0 = performance.now();
         const f = (now) => {
           if (this._algoToken !== token) return res();
@@ -1376,49 +1377,92 @@ figcaption {
       };
 
       const runRS = async (label) => {
-        // contributions live at every node (faded, colored by their OWNER);
-        // accumulators absorb them on the way to the owner
+        // Every node holds a contribution to every chunk (faded, colored by
+        // the chunk's OWNER). One accumulator per chunk circles the ring —
+        // half clockwise, half counterclockwise — and at every hop the local
+        // contribution visibly slides INTO it, growing the running sum.
         const contrib = {};
         for (let i = 0; i < N; i++) {
           for (let j = 0; j < N; j++) {
-            contrib[`${i},${j}`] = chunk(devVar(j), ...slotPt(i, j, i === j ? 0 : 1), 0.35);
+            contrib[`${i},${j}`] = chunk(devVar(j), ...slotPt(i, j, 1), 0.45);
           }
         }
-        // accumulator for chunk j: cw half starts at j+1, ccw half at j-1
+        const carryPt = (node, j) => {
+          const [x] = slotPt(node, j, 0);
+          return [x, CY - 40];
+        };
+        const accSize = (k) => 16 + k * 7; // the running sum grows per absorb
+        const mkAcc = (j, node, k, o) => {
+          const [x, y] = carryPt(node, j);
+          const g = svgEl("g", { transform: `translate(${x},${y})` }, svg);
+          svgEl("rect", {
+            x: -accSize(k) / 2, y: -9, width: accSize(k), height: 18, rx: 3,
+            fill: devVar(j), "fill-opacity": o,
+            stroke: "var(--cv-text)", "stroke-opacity": 0.35, "stroke-width": 1,
+          }, g);
+          return g;
+        };
+        const absorb = async (a, node) => {
+          const c = contrib[`${node},${a.j}`];
+          if (!c) return;
+          const [fx, fy] = slotPt(node, a.j, 1);
+          const [tx, ty] = carryPt(node, a.j);
+          c.remove();
+          delete contrib[`${node},${a.j}`];
+          const fl = flyer(devVar(a.j), 0.8, 0);
+          await move(fl, fx, fy, tx, ty, 340);
+          fl.remove();
+          a.k += 1;
+          a.o = Math.min(1, 0.45 + 0.55 * (a.k / N));
+          if (a.el) a.el.remove();
+          a.el = mkAcc(a.j, node, a.k, a.o);
+        };
         const acc = [];
         for (let j = 0; j < N; j++) {
-          acc.push({ j, at: (j + 1) % N, dir: -1, half: 0 }); // toward j going ccw
-          acc.push({ j, at: (j - 1 + N) % N, dir: +1, half: 1 }); // toward j going cw
+          const dir = j % 2 === 0 ? +1 : -1; // half go each way around the ring
+          const at = (j + dir + N) % N;      // farthest-from-owner start
+          acc.push({ j, dir, at, k: 0, o: 0.45, el: null });
         }
+        setHop(0, N - 1, label);
+        await Promise.all(acc.map((a) => absorb(a, a.at)));
         for (let k = 1; k <= N - 1; k++) {
           if (this._algoToken !== token) return;
           setHop(k, N - 1, label);
-          const jobs = [];
-          for (const a of acc) {
-            if (a.at === a.j) continue;
+          await Promise.all(acc.map(async (a) => {
             const nxt = (a.at + a.dir + N) % N;
-            const opac = 0.35 + 0.65 * (k / (N - 1));
-            jobs.push({
-              hue: devVar(a.j), o: opac, half: 1,
-              from: slotPt(a.at, a.j, a.half), to: slotPt(nxt, a.j, a.half),
-              land: () => {
-                const key = `${nxt},${a.j}`;
-                if (contrib[key]) contrib[key].setAttribute("fill-opacity", nxt === a.j ? 1 : opac);
-              },
-            });
+            const [x1, y1] = carryPt(a.at, a.j);
+            const [x2, y2] = carryPt(nxt, a.j);
+            a.el.remove();
+            const fl = svgEl("g", {}, svg);
+            const inner = svgEl("rect", {
+              x: -accSize(a.k) / 2, y: -9, width: accSize(a.k), height: 18, rx: 3,
+              fill: devVar(a.j), "fill-opacity": a.o,
+              stroke: "var(--cv-text)", "stroke-opacity": 0.35, "stroke-width": 1,
+            }, fl);
+            await move(fl, x1, y1, x2, y2, 800);
+            fl.remove();
             a.at = nxt;
-          }
-          await hopMove(jobs, 800);
-          // absorbed contributions fade away
-          for (const a of acc) {
-            if (a.at !== a.j && contrib[`${a.at},${a.j}`]) {
-              contrib[`${a.at},${a.j}`].setAttribute("fill-opacity", 0.12);
-            }
-          }
-          await sleep(320);
+            a.el = mkAcc(a.j, nxt, a.k, a.o);
+          }));
+          if (this._algoToken !== token) return;
+          await Promise.all(acc.map((a) => absorb(a, a.at)));
+          await sleep(260);
         }
-        // owners end with their fully reduced chunk
-        for (let j = 0; j < N; j++) contrib[`${j},${j}`].setAttribute("fill-opacity", 1);
+        // arrived: the fully reduced chunk settles into its owner's slot
+        await Promise.all(acc.map(async (a) => {
+          const [x1, y1] = carryPt(a.j, a.j);
+          const [x2, y2] = slotPt(a.j, a.j, 1);
+          a.el.remove();
+          const fl = svgEl("g", {}, svg);
+          svgEl("rect", {
+            x: -accSize(a.k) / 2, y: -9, width: accSize(a.k), height: 18, rx: 3,
+            fill: devVar(a.j), "fill-opacity": 1,
+            stroke: "var(--cv-text)", "stroke-opacity": 0.35, "stroke-width": 1,
+          }, fl);
+          await move(fl, x1, y1, x2, y2, 380);
+          fl.remove();
+          chunk(devVar(a.j), x2, y2, 1);
+        }));
       };
 
       const runA2A = async () => {
