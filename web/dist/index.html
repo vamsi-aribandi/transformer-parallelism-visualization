@@ -383,22 +383,45 @@ figcaption {
   .tpv-speed input { width: 70px; }
 }
 
-/* collective-algorithm inset */
-.tpv-algo {
+/* fixed detail band: the dimension diagram lives here, and yields the floor
+   to the collective's wire-level animation when one is current */
+.tpv-band {
   grid-area: algo;
+  position: relative;
+  height: 172px;
   border-top: 1px solid var(--line);
   border-right: 1px solid var(--line);
   background: var(--cv-bg);
-  padding: 6px 14px 8px;
+  overflow: hidden;
 }
-.tpv-algo[hidden] { display: none; }
+.tpv-band-legend {
+  position: absolute; top: 50%; left: 50%;
+  width: 400px; max-width: 60%;
+  transform: translate(-50%, -50%) scale(1.12);
+  transition: left 0.45s cubic-bezier(.4,0,.2,1), transform 0.45s cubic-bezier(.4,0,.2,1),
+              opacity 0.3s;
+}
+.tpv-band.has-algo .tpv-band-legend {
+  left: 8px;
+  transform: translate(0, -50%) scale(0.62);
+  transform-origin: left center;
+  opacity: 0.75;
+}
+.tpv-band-legend svg { display: block; width: 100%; height: auto; }
+.tpv-algo-inner {
+  position: absolute; top: 4px; bottom: 4px; left: 232px; right: 12px;
+  opacity: 0;
+  transition: opacity 0.3s 0.15s;
+  pointer-events: none;
+}
+.tpv-band.has-algo .tpv-algo-inner { opacity: 1; }
 .tpv-algo-head {
   display: flex; justify-content: space-between; gap: 12px;
-  font-family: var(--sans); font-size: 11.5px; color: var(--ink-2);
-  padding: 2px 2px 6px;
+  font-family: var(--sans); font-size: 11px; color: var(--ink-2);
+  padding: 2px 2px 4px; line-height: 1.35;
 }
 .tpv-algo-hop { font-family: var(--mono); flex: none; }
-.tpv-algo-svg { display: block; width: 100%; max-width: 760px; margin: 0 auto; height: auto; }
+.tpv-algo-svg { display: block; width: 100%; max-width: 700px; margin: 0 auto; height: auto; max-height: 128px; }
 </style>
 </head>
 <body>
@@ -513,7 +536,7 @@ figcaption {
   const FRAME_W = DOC.frame[0], FRAME_H = DOC.frame[1];
   const SX = (v) => v + FRAME_W / 2;
   const SY = (v) => FRAME_H / 2 - v;
-  const VIEWBOX = "0 116 1422 700";
+  const VIEWBOX = "0 116 1422 600";
 
   const TOKENS = new Set([
     "text", "muted", "accent", "comm", "good", "act", "actS", "wt", "wtS",
@@ -846,7 +869,6 @@ figcaption {
       this.appendChild(wrap);
 
       this.scene = svgEl("g", {}, this.svg);
-      this.svg.appendChild(this.dimLegend());
       this.els = new Array(this.tl.objects.length);
       this.tl.objects
         .map((spec, i) => ({ spec, i }))
@@ -864,15 +886,21 @@ figcaption {
         });
       this.els.forEach(applyFit);
 
+      this.band = document.createElement("div");
+      this.band.className = "tpv-band";
+      const legendWrap = document.createElement("div");
+      legendWrap.className = "tpv-band-legend";
+      legendWrap.appendChild(this.dimLegend());
+      this.band.appendChild(legendWrap);
       this.algo = document.createElement("div");
-      this.algo.className = "tpv-algo";
-      this.algo.hidden = true;
+      this.algo.className = "tpv-algo-inner";
       this.algo.innerHTML = `<div class="tpv-algo-head">
           <span class="tpv-algo-title"></span>
           <span class="tpv-algo-hop"></span>
         </div>`;
       this.algoSvg = svgEl("svg", { viewBox: "0 0 1000 190", class: "tpv-algo-svg" }, this.algo);
-      this.appendChild(this.algo);
+      this.band.appendChild(this.algo);
+      this.appendChild(this.band);
       this._algoToken = 0;
 
       this.stepper = document.createElement("div");
@@ -911,9 +939,12 @@ figcaption {
 
     /* A small annotated tensor: what the amber decks are made of. */
     dimLegend() {
-      const g = document.createElementNS(NS, "g");
-      g.setAttribute("transform", "translate(640, 748)");
-      g.setAttribute("class", "tpv-dim-legend");
+      const svg = svgEl("svg", {
+        viewBox: "-130 -32 460 122",
+        class: "tpv-dim-legend",
+        preserveAspectRatio: "xMidYMid meet",
+      });
+      const g = svgEl("g", {}, svg);
       const W = 58, H = 36, DX = 8, DY = 7, N = 3;
       for (let i = N - 1; i >= 0; i--) {
         svgEl("rect", {
@@ -945,7 +976,7 @@ figcaption {
       label(-18, H / 2, "T", "sequence", "end");
       arrow(W + 4, H - 4, W + 4 + (N - 1) * DX + 8, H - 4 - (N - 1) * DY - 8); // B: depth
       label(W + (N - 1) * DX + 20, H - (N - 1) * DY - 16, "B", "batch");
-      return g;
+      return svg;
     }
 
     /* ------------------------------------------------------ mode + lists */
@@ -1258,8 +1289,8 @@ figcaption {
     if (kind === this._algoKind) return;
     this._algoKind = kind;
     this._algoToken++;
-    if (!kind) { this.algo.hidden = true; return; }
-    this.algo.hidden = false;
+    this.band.classList.toggle("has-algo", !!kind);
+    if (!kind) return;
     this.algo.querySelector(".tpv-algo-title").textContent = RING_TITLES[kind];
     this.runAlgo(kind, ++this._algoToken);
   };
@@ -1273,7 +1304,7 @@ figcaption {
     const devVar = (i) => `var(--cv-dev${i})`;
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-    while (this._algoToken === token && !this.algo.hidden) {
+    while (this._algoToken === token && this.band.classList.contains("has-algo")) {
       svg.textContent = "";
       // ring links (neighbors + wrap arc), arrowed both directions
       for (let i = 0; i < N - 1; i++) {

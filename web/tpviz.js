@@ -13,7 +13,7 @@
   const FRAME_W = DOC.frame[0], FRAME_H = DOC.frame[1];
   const SX = (v) => v + FRAME_W / 2;
   const SY = (v) => FRAME_H / 2 - v;
-  const VIEWBOX = "0 116 1422 700";
+  const VIEWBOX = "0 116 1422 600";
 
   const TOKENS = new Set([
     "text", "muted", "accent", "comm", "good", "act", "actS", "wt", "wtS",
@@ -346,7 +346,6 @@
       this.appendChild(wrap);
 
       this.scene = svgEl("g", {}, this.svg);
-      this.svg.appendChild(this.dimLegend());
       this.els = new Array(this.tl.objects.length);
       this.tl.objects
         .map((spec, i) => ({ spec, i }))
@@ -364,15 +363,21 @@
         });
       this.els.forEach(applyFit);
 
+      this.band = document.createElement("div");
+      this.band.className = "tpv-band";
+      const legendWrap = document.createElement("div");
+      legendWrap.className = "tpv-band-legend";
+      legendWrap.appendChild(this.dimLegend());
+      this.band.appendChild(legendWrap);
       this.algo = document.createElement("div");
-      this.algo.className = "tpv-algo";
-      this.algo.hidden = true;
+      this.algo.className = "tpv-algo-inner";
       this.algo.innerHTML = `<div class="tpv-algo-head">
           <span class="tpv-algo-title"></span>
           <span class="tpv-algo-hop"></span>
         </div>`;
       this.algoSvg = svgEl("svg", { viewBox: "0 0 1000 190", class: "tpv-algo-svg" }, this.algo);
-      this.appendChild(this.algo);
+      this.band.appendChild(this.algo);
+      this.appendChild(this.band);
       this._algoToken = 0;
 
       this.stepper = document.createElement("div");
@@ -411,9 +416,12 @@
 
     /* A small annotated tensor: what the amber decks are made of. */
     dimLegend() {
-      const g = document.createElementNS(NS, "g");
-      g.setAttribute("transform", "translate(640, 748)");
-      g.setAttribute("class", "tpv-dim-legend");
+      const svg = svgEl("svg", {
+        viewBox: "-130 -32 460 122",
+        class: "tpv-dim-legend",
+        preserveAspectRatio: "xMidYMid meet",
+      });
+      const g = svgEl("g", {}, svg);
       const W = 58, H = 36, DX = 8, DY = 7, N = 3;
       for (let i = N - 1; i >= 0; i--) {
         svgEl("rect", {
@@ -445,7 +453,7 @@
       label(-18, H / 2, "T", "sequence", "end");
       arrow(W + 4, H - 4, W + 4 + (N - 1) * DX + 8, H - 4 - (N - 1) * DY - 8); // B: depth
       label(W + (N - 1) * DX + 20, H - (N - 1) * DY - 16, "B", "batch");
-      return g;
+      return svg;
     }
 
     /* ------------------------------------------------------ mode + lists */
@@ -758,8 +766,8 @@
     if (kind === this._algoKind) return;
     this._algoKind = kind;
     this._algoToken++;
-    if (!kind) { this.algo.hidden = true; return; }
-    this.algo.hidden = false;
+    this.band.classList.toggle("has-algo", !!kind);
+    if (!kind) return;
     this.algo.querySelector(".tpv-algo-title").textContent = RING_TITLES[kind];
     this.runAlgo(kind, ++this._algoToken);
   };
@@ -773,7 +781,7 @@
     const devVar = (i) => `var(--cv-dev${i})`;
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-    while (this._algoToken === token && !this.algo.hidden) {
+    while (this._algoToken === token && this.band.classList.contains("has-algo")) {
       svg.textContent = "";
       // ring links (neighbors + wrap arc), arrowed both directions
       for (let i = 0; i < N - 1; i++) {
