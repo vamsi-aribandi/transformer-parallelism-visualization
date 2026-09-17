@@ -45,8 +45,10 @@
     The step bar under each figure is <strong>discrete</strong> — every segment is one
     semantic operation (a matmul, a collective, a save). Click a segment to jump to the
     state <em>after</em> that operation; press play to watch the operations animate in
-    order. The program beside the canvas is the whole pass as a list of operations in
-    scaling-book notation — it follows
+    order. Whenever the current operation is a collective, a panel beneath the canvas
+    shows how it actually runs on the wire — the bidirectional ring pattern from the
+    scaling book, hop by hop. The program beside the canvas is the whole pass as a
+    list of operations in scaling-book notation — it follows
     along as you step, and clicking any line jumps straight there. Each figure opens in
     forward-only mode; switch to <em>+ Backward</em> to watch the full training step,
     where activations get saved beneath the weights that will need them, and every

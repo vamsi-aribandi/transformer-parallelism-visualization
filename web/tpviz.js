@@ -364,6 +364,17 @@
         });
       this.els.forEach(applyFit);
 
+      this.algo = document.createElement("div");
+      this.algo.className = "tpv-algo";
+      this.algo.hidden = true;
+      this.algo.innerHTML = `<div class="tpv-algo-head">
+          <span class="tpv-algo-title"></span>
+          <span class="tpv-algo-hop"></span>
+        </div>`;
+      this.algoSvg = svgEl("svg", { viewBox: "0 0 1000 190", class: "tpv-algo-svg" }, this.algo);
+      this.appendChild(this.algo);
+      this._algoToken = 0;
+
       this.stepper = document.createElement("div");
       this.stepper.className = "tpv-stepper";
       this.appendChild(this.stepper);
@@ -577,6 +588,8 @@
       }
       this.posEl.textContent = `${vi + 1} / ${this.visible.length}`;
       this.playBtn.textContent = this.playing ? "❚❚" : "▶";
+      const st = vi >= 0 ? this.tl.steps[this.visible[vi]] : null;
+      this.updateAlgo(st && RING_TITLES[st.kind] ? st.kind : null);
     }
 
     /* ------------------------------------------------------- play mode */
@@ -731,6 +744,225 @@
       });
     }
   }
+
+  /* ---------------------------- ring-collective algorithm inset ---------- */
+  const RING_TITLES = {
+    AllGather: "how it runs: bidirectional ring AllGather — each shard splits in half and circulates both ways; every device keeps a copy as it passes",
+    ReduceScatter: "how it runs: bidirectional ring ReduceScatter — partial sums travel toward their owner, absorbing each device's contribution on the way",
+    AllReduce: "how it runs: ReduceScatter, then AllGather — reduce toward owners, then circulate the results",
+    AllToAll: "how it runs: ring AllToAll — every chunk hops the shortest way around to its destination device",
+    P2PSend: "how it runs: a single point-to-point send between neighboring stages",
+  };
+
+  TPVizFigure.prototype.updateAlgo = function (kind) {
+    if (kind === this._algoKind) return;
+    this._algoKind = kind;
+    this._algoToken++;
+    if (!kind) { this.algo.hidden = true; return; }
+    this.algo.hidden = false;
+    this.algo.querySelector(".tpv-algo-title").textContent = RING_TITLES[kind];
+    this.runAlgo(kind, ++this._algoToken);
+  };
+
+  TPVizFigure.prototype.runAlgo = async function (kind, token) {
+    const svg = this.algoSvg;
+    const hopEl = this.algo.querySelector(".tpv-algo-hop");
+    const N = Math.min(this.tl.objects.length ? 4 : 4, 4);
+    const cx = (i) => 170 + i * 220;
+    const CY = 95, NW = 150, NH = 120;
+    const devVar = (i) => `var(--cv-dev${i})`;
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+    while (this._algoToken === token && !this.algo.hidden) {
+      svg.textContent = "";
+      // ring links (neighbors + wrap arc), arrowed both directions
+      for (let i = 0; i < N - 1; i++) {
+        svgEl("line", {
+          x1: cx(i) + NW / 2, y1: CY, x2: cx(i + 1) - NW / 2, y2: CY,
+          stroke: "var(--cv-muted)", "stroke-width": 1.4, "stroke-opacity": 0.6,
+        }, svg);
+      }
+      svgEl("path", {
+        d: `M ${cx(0)} ${CY - NH / 2} C ${cx(0)} 8, ${cx(N - 1)} 8, ${cx(N - 1)} ${CY - NH / 2}`,
+        fill: "none", stroke: "var(--cv-muted)", "stroke-width": 1.4,
+        "stroke-opacity": 0.6, "stroke-dasharray": "5 5",
+      }, svg);
+      // nodes with N slot columns
+      const slotPt = (node, col, row) =>
+        [cx(node) - NW / 2 + 18 + col * 30, CY - 22 + row * 34];
+      for (let i = 0; i < N; i++) {
+        svgEl("rect", {
+          x: cx(i) - NW / 2, y: CY - NH / 2, width: NW, height: NH, rx: 10,
+          fill: "var(--cv-boxFill)", stroke: devVar(i), "stroke-width": 1.6,
+        }, svg);
+        const t = svgEl("text", {
+          x: cx(i), y: CY - NH / 2 + 14, "text-anchor": "middle",
+          "font-size": 12, "font-weight": 600, fill: devVar(i),
+        }, svg);
+        t.textContent = `Dev ${i}`;
+      }
+      const chunk = (hue, x, y, o = 1, half = 0) =>
+        svgEl("rect", {
+          x: x - 10, y: y - 8 + (half ? 9 : 0), width: 20, height: half ? 7 : 16,
+          rx: 2.5, fill: hue, "fill-opacity": o, stroke: "var(--cv-text)",
+          "stroke-opacity": 0.25, "stroke-width": 0.8,
+        }, svg);
+      const move = (el, x1, y1, x2, y2, dur) => new Promise((res) => {
+        const t0 = performance.now();
+        const f = (now) => {
+          if (this._algoToken !== token) return res();
+          const u = Math.min(1, (now - t0) / dur);
+          const p = u * u * (3 - 2 * u);
+          const dy = -26 * Math.sin(Math.PI * p); // small arc over the link
+          el.setAttribute("transform",
+            `translate(${(x1 + (x2 - x1) * p).toFixed(1)},${(y1 + (y2 - y1) * p + dy).toFixed(1)})`);
+          if (u < 1) requestAnimationFrame(f); else res();
+        };
+        requestAnimationFrame(f);
+      });
+      const flyer = (hue, o, half) => {
+        const g = svgEl("g", {}, svg);
+        chunk(hue, 0, 0, o, half);
+        return g;
+      };
+      const hopMove = async (jobs, dur) => {
+        await Promise.all(jobs.map(async (j) => {
+          const el = flyer(j.hue, j.o ?? 1, j.half ?? 0);
+          const [x1, y1] = j.from, [x2, y2] = j.to;
+          await move(el, x1, y1, x2, y2, dur);
+          el.remove();
+          if (j.land) j.land();
+        }));
+      };
+      const setHop = (k, total, label) => {
+        hopEl.textContent = `${label || "hop"} ${k} / ${total}`;
+      };
+
+      if (kind === "AllGather" || kind === "AllReduce") {
+        // (AllReduce shows its AG phase second; RS phase first below)
+      }
+
+      const runAG = async (label) => {
+        // store-and-forward, both directions; slot grid marks copies held
+        const held = [];
+        for (let i = 0; i < N; i++) {
+          for (let h = 0; h < 2; h++) {
+            const [x, y] = slotPt(i, i, h);
+            held.push(chunk(devVar(i), x, y, 1, 1));
+          }
+        }
+        for (let k = 1; k <= N - 1; k++) {
+          if (this._algoToken !== token) return;
+          setHop(k, N - 1, label);
+          const jobs = [];
+          for (let i = 0; i < N; i++) {
+            const cwOrigin = (i - k + 1 + N) % N;   // half moving clockwise
+            const ccwOrigin = (i + k - 1) % N;      // half moving counterclockwise
+            const cwTo = (i + 1) % N, ccwTo = (i - 1 + N) % N;
+            jobs.push({
+              hue: devVar(cwOrigin), half: 1,
+              from: slotPt(i, cwOrigin, 0), to: slotPt(cwTo, cwOrigin, 0),
+              land: () => chunk(devVar(cwOrigin), ...slotPt(cwTo, cwOrigin, 0), 1, 1),
+            });
+            jobs.push({
+              hue: devVar(ccwOrigin), half: 1,
+              from: slotPt(i, ccwOrigin, 1), to: slotPt(ccwTo, ccwOrigin, 1),
+              land: () => chunk(devVar(ccwOrigin), ...slotPt(ccwTo, ccwOrigin, 1), 1, 1),
+            });
+          }
+          await hopMove(jobs, 800);
+          await sleep(320);
+        }
+      };
+
+      const runRS = async (label) => {
+        // contributions live at every node (faded, colored by their OWNER);
+        // accumulators absorb them on the way to the owner
+        const contrib = {};
+        for (let i = 0; i < N; i++) {
+          for (let j = 0; j < N; j++) {
+            contrib[`${i},${j}`] = chunk(devVar(j), ...slotPt(i, j, i === j ? 0 : 1), 0.35);
+          }
+        }
+        // accumulator for chunk j: cw half starts at j+1, ccw half at j-1
+        const acc = [];
+        for (let j = 0; j < N; j++) {
+          acc.push({ j, at: (j + 1) % N, dir: -1, half: 0 }); // toward j going ccw
+          acc.push({ j, at: (j - 1 + N) % N, dir: +1, half: 1 }); // toward j going cw
+        }
+        for (let k = 1; k <= N - 1; k++) {
+          if (this._algoToken !== token) return;
+          setHop(k, N - 1, label);
+          const jobs = [];
+          for (const a of acc) {
+            if (a.at === a.j) continue;
+            const nxt = (a.at + a.dir + N) % N;
+            const opac = 0.35 + 0.65 * (k / (N - 1));
+            jobs.push({
+              hue: devVar(a.j), o: opac, half: 1,
+              from: slotPt(a.at, a.j, a.half), to: slotPt(nxt, a.j, a.half),
+              land: () => {
+                const key = `${nxt},${a.j}`;
+                if (contrib[key]) contrib[key].setAttribute("fill-opacity", nxt === a.j ? 1 : opac);
+              },
+            });
+            a.at = nxt;
+          }
+          await hopMove(jobs, 800);
+          // absorbed contributions fade away
+          for (const a of acc) {
+            if (a.at !== a.j && contrib[`${a.at},${a.j}`]) {
+              contrib[`${a.at},${a.j}`].setAttribute("fill-opacity", 0.12);
+            }
+          }
+          await sleep(320);
+        }
+        // owners end with their fully reduced chunk
+        for (let j = 0; j < N; j++) contrib[`${j},${j}`].setAttribute("fill-opacity", 1);
+      };
+
+      const runA2A = async () => {
+        const placed = {};
+        for (let i = 0; i < N; i++) {
+          for (let j = 0; j < N; j++) {
+            placed[`${i},${j}`] = chunk(devVar(j), ...slotPt(i, j, 0), i === j ? 1 : 0.75);
+          }
+        }
+        const maxHops = Math.floor(N / 2);
+        for (let k = 1; k <= maxHops; k++) {
+          if (this._algoToken !== token) return;
+          setHop(k, maxHops);
+          const jobs = [];
+          for (let i = 0; i < N; i++) {
+            for (let j = 0; j < N; j++) {
+              const dist = ((j - i) % N + N) % N;
+              const dir = dist <= N / 2 ? +1 : -1;
+              const hops = Math.min(dist, N - dist);
+              if (hops < k) continue;
+              const cur = (i + dir * (k - 1) + N) % N;
+              const nxt = (cur + dir + N) % N;
+              jobs.push({
+                hue: devVar(j), o: 0.85,
+                from: slotPt(cur, j, 0), to: slotPt(nxt, j, 0),
+                land: () => { if (nxt === j) chunk(devVar(j), ...slotPt(j, j === i ? i : i, 1), 1); },
+              });
+              const el = placed[`${i},${j}`];
+              if (el && k === 1) el.setAttribute("fill-opacity", 0.15);
+            }
+          }
+          await hopMove(jobs, 800);
+          await sleep(320);
+        }
+      };
+
+      if (kind === "AllGather") await runAG();
+      else if (kind === "ReduceScatter") await runRS();
+      else if (kind === "AllReduce") { await runRS("reduce-scatter · hop"); await sleep(500); await runAG("all-gather · hop"); }
+      else if (kind === "AllToAll") await runA2A();
+      if (this._algoToken !== token) return;
+      await sleep(1600);
+    }
+  };
 
   customElements.define("tpviz-figure", TPVizFigure);
 

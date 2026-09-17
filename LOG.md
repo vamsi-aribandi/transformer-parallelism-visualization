@@ -105,3 +105,7 @@ Linear, detailed log of work. Newest entries at the bottom. See [STATE.md](STATE
 - Forward mode truly hides saved activations: stash minis are now marked at the SOURCE (`web_save` attr → `sv` flag → `saveObjs`) instead of inferred from spawn-boundary attribution, which missed half of them (spawn windows straddle step boundaries).
 - Program subtext trimmed to just the forward citation (+ jump link) on backward steps; section headings are sticky within the list.
 - Collective animations restored to the real recorded choreography: beats now carry spawn-time states (flight copies fly from their SOURCE lane instead of fading in at the destination) and interior path samples for arced crossflies (AllGather/ReduceScatter/AllToAll arcs replay faithfully in play mode).
+
+**v8: wire-level collective algorithms**
+- New algorithm inset under the canvas, shown whenever the current step is a collective: four ring-connected device nodes animate the scaling book's actual wire pattern hop by hop — bidirectional ring AllGather (shard halves circulate both ways, every node keeps a copy), bidirectional ring ReduceScatter (partial sums absorb each node's contribution en route to their owner), AllReduce as RS-then-AG, shortest-path ring AllToAll. Pure client-side, looping, theme-aware.
+- Layout bug found while placing it: the tall program column was stretching the canvas grid rows (an empty cv-bg band below the canvas) — the program list is now absolutely positioned inside its column so it never drives row heights.
