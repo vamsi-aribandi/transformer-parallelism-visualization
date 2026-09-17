@@ -211,8 +211,12 @@ def backward_mlp(cfg: StrategyConfig, rec: LayerRecord, d_out: LTensor, layer: i
     _tag_note(s, rec, "W_out")
     steps += s
 
-    steps.append(GeluStep(src=dtmp, out=dtmp, layer=layer, phase=phase,
-                          caption="through the gelu: dTmp ⊙ gelu′"))
+    tmp_fwd = replace(dtmp, name="Tmp", kind="activation")
+    steps.append(GeluStep(
+        src=dtmp, out=dtmp, layer=layer, phase=phase,
+        caption="through the gelu: multiply by its derivative at the saved input",
+        note_tex=FROM_FWD + GeluStep(src=tmp_fwd, out=tmp_fwd).tex(),
+    ))
 
     s, dx = plan_matmul(
         dtmp, w_in.transposed(), "dX", "F", layer=layer, phase=phase,
@@ -255,8 +259,12 @@ def backward_moe(cfg: StrategyConfig, rec: LayerRecord, d_out: LTensor, layer: i
     dw_out = LTensor("dW_out", ("E", "F", "D"), {"E": axis}, kind="grad")
     steps.append(MatMulStep(a=rec.tmp, b=dxe, out=dw_out, contract="S",
                             layer=layer, phase=phase, note_tex=note_out))
-    steps.append(GeluStep(src=dtmp, out=dtmp, layer=layer, phase=phase,
-                          caption="through the gelu: dTmp ⊙ gelu′"))
+    tmp_fwd = replace(dtmp, name="Tmp", kind="activation")
+    steps.append(GeluStep(
+        src=dtmp, out=dtmp, layer=layer, phase=phase,
+        caption="through the gelu: multiply by its derivative at the saved input",
+        note_tex=FROM_FWD + GeluStep(src=tmp_fwd, out=tmp_fwd).tex(),
+    ))
     dtok = LTensor("dX", ("E", "S", "D"), {"E": axis}, kind="grad")
     steps.append(MatMulStep(a=dtmp, b=w_in.transposed(), out=dtok, contract="F",
                             layer=layer, phase=phase, note_tex=note_in))

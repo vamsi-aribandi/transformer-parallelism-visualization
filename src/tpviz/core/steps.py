@@ -99,6 +99,16 @@ class GeluStep(Step):
     out: LTensor
 
     def tex(self) -> str:
+        if self.backward:
+            # dTmp <- dTmp ⊙ gelu'(Tmp), evaluated at the saved pre-activation
+            from dataclasses import replace as _replace
+
+            base = _replace(self.src, name=self.src.name.removeprefix("d"),
+                            kind="activation")
+            return (
+                rf"{self.src.tex()} \odot \text{{gelu}}'({base.tex()})"
+                rf" \,\to\, {self.out.tex()}"
+            )
         return rf"\text{{gelu}}({self.src.tex()}) \,\to\, {self.out.tex()}"
 
 
