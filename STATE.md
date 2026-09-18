@@ -4,11 +4,12 @@ Current state and design decisions. Companion: [LOG.md](LOG.md) (linear work log
 
 ## What this is
 
-Manim CE videos explaining transformer parallelism in the **forward pass**, one video per strategy, in the [JAX scaling book](https://jax-ml.github.io/scaling-book/)'s sharding notation: `A[B_X, T, D]` (subscript = mesh axis sharding that dim), partial sums `C[I,K]{U_X}`, `Mesh({'X': 4})`, `AllGather_X`, `ReduceScatter_{Y,D}`, `AllToAll_Z`.
+Manim CE videos and an interactive article explaining transformer parallelism, one strategy at a time, in the [JAX scaling book](https://jax-ml.github.io/scaling-book/)'s sharding notation: `A[B_X, T, D]` (subscript = mesh axis sharding that dim), partial sums `C[I,K]{U_X}`, `Mesh({'X': 4})`, `AllGather_X`, `ReduceScatter_{Y,D}`, `AllToAll_Z`.
 
 **Deliverables to date**:
 - 6 forward-pass videos in `renders/` (1080p60): `dp`, `fsdp`, `tp`, `cp`, `pp`, `ep`.
 - 6 **forward+backward** (training-step) videos, 480p only until the look is signed off (`make lq-train-all`; scenes `*_train.py`). They add: saved activations parking in a per-station stash row (the memory cost), rose gradient tensors flowing right→left, weight-gradient "shadow" rects behind each weight, a matmul counter showing backward = 2× forward, and PP's double-width backward Gantt cells.
+- **The interactive article** (`web/dist/index.html`, `make web`): all six strategies as prose sections with embedded `<tpviz-figure>` web components — discrete stepper (click = teleport, play = the only animation, speed slider), side program with sticky sections/live highlight/forward-citation links, hover tooltips with concrete shapes and memory, a fixed detail band where the B×T×D diagram hands off to wire-level bidirectional-ring collective animations, Gruvbox light/dark themes matching vamsi-aribandi.github.io. Data recorded from the manim scenes (RecorderMixin), equations as selectable HTML (closed-grammar tex→HTML). PP figures are driven by `mark_step` hooks in the scenes.
 
 Model shown: 2-layer transformer, simple MHA (fused head dim `H`) + MLP; the MLP is a routed MoE for EP.
 
@@ -43,5 +44,5 @@ Collectives are **derived, not hand-animated**, so future multi-axis combos (FSD
 ## Known gaps / next work
 
 - Multi-axis combos need: lanes for multi-axis meshes (lane per device with axis-coord grouping/coloring), PP composition in the scheduler, per-axis flight styling. `axis_coord()` in tensor_mobject.py already unravels multi-axis device indices.
-- Backprop visualization: the canvas is ready (right→left sweep); needs backward-pass steps in `core/model.py`.
+- The training videos (`*_train`) predate several article-era fixes (dW anchoring, gelu-derivative notation land automatically on re-render; chips/counters are video-only by design) — re-render with `make lq-train-all` when needed.
 - Ignored by design: residual stream, LayerNorm, GQA/attention tricks, MoE capacity/load-balancing (called out in the EP video).

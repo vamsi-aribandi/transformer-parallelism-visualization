@@ -129,6 +129,14 @@ class ForwardPassScene(Scene):
     def rt(self, base: float) -> float:
         return base * self.speed
 
+    # recorder hooks: PP scenes drive plays outside play_step and mark their
+    # semantic steps explicitly; in normal renders these are no-ops
+    def mark_step(self, step):
+        pass
+
+    def flush_mark(self):
+        pass
+
     def n_lanes(self) -> int:
         return len(self.canvas.lanes)
 

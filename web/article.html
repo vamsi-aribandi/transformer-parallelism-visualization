@@ -55,6 +55,47 @@
     backward operation cites the forward operation it differentiates.
   </p>
 
+
+  <h2 id="dp">Data parallelism</h2>
+  <p>
+    The simplest strategy: replicate the weights everywhere and shard the
+    <em>batch</em> — each device gets <code>In[B_X, T, D]</code>, a quarter of the
+    sequences, and runs the whole model on them. The forward pass needs
+    <strong>zero communication</strong>; step through it and watch nothing ever cross
+    between lanes. The price appears in the backward pass: every device computes a
+    weight gradient from only its shard of the batch, so the gradients are
+    <em>unreduced partial sums</em> — <code>dW[D, F]{U_X}</code> — and each one
+    must be <strong>AllReduced</strong> across the data axis before the optimizer
+    can step. That per-weight AllReduce is the classic data-parallel gradient sync.
+  </p>
+  <figure class="tpv-outer">
+    <tpviz-figure strategy="dp"></tpviz-figure>
+    <figcaption>
+      Data parallelism over <code>Mesh({'X': 4})</code>: a silent forward pass, and
+      an AllReduce per weight gradient in the backward.
+    </figcaption>
+  </figure>
+
+  <h2 id="fsdp">Fully-sharded data parallelism (ZeRO-3)</h2>
+  <p>
+    Data parallelism replicates every weight four times — FSDP refuses to pay that
+    memory. Weights are sharded along the same data axis
+    (<code>W_in[D_X, F]</code>, <code>W_out[F, D_X]</code>), and each one is
+    <strong>AllGathered just in time</strong>, used for its matmul, and immediately
+    discarded — watch the station header switch to the gathered shape and back.
+    The backward pass pays the gather <em>again</em> (the weight is long gone), and
+    the gradient flows the other way: each <code>dW</code> is a partial sum that
+    <strong>ReduceScatters</strong> back to exactly the shard layout the weights
+    live in — memory of a shard, communication of a gather, in both passes.
+  </p>
+  <figure class="tpv-outer">
+    <tpviz-figure strategy="fsdp"></tpviz-figure>
+    <figcaption>
+      FSDP over <code>Mesh({'X': 4})</code>: just-in-time weight gathers forward,
+      re-gathers plus gradient ReduceScatters backward.
+    </figcaption>
+  </figure>
+
   <h2 id="tp">Tensor parallelism</h2>
   <p>
     Tensor parallelism (the Megatron scheme) shards the <em>feature</em> dimensions:
@@ -87,12 +128,70 @@
     </figcaption>
   </figure>
 
-  <h2>Coming next</h2>
-  <p class="muted">
-    Data parallelism, FSDP (ZeRO-3), context parallelism, pipeline parallelism, and
-    expert parallelism render from the same machinery and will join this page as
-    sections with their own figures.
+
+  <h2 id="cp">Context parallelism</h2>
+  <p>
+    Long sequences don't fit on one device, so shard the <em>sequence</em>:
+    <code>In[B, T_X, D]</code>, each device holding a quarter of the tokens. The MLP
+    never notices — tokens are independent there, so it runs without a word between
+    devices. Attention is the whole story: every query must see every key and value,
+    so <code>K</code> and <code>V</code> are <strong>AllGathered</strong> across the
+    sequence shards while <code>Q</code> stays local. In the backward pass the
+    gathered K/V come back to haunt us: every device produces gradient contributions
+    for <em>all</em> tokens' keys and values, so <code>dK</code> and <code>dV</code>
+    are partial sums that <strong>ReduceScatter</strong> back over the sequence — and
+    the weight gradients AllReduce over the context axis, exactly like data
+    parallelism sums over the batch.
   </p>
+  <figure class="tpv-outer">
+    <tpviz-figure strategy="cp"></tpviz-figure>
+    <figcaption>
+      Context parallelism over <code>Mesh({'X': 4})</code>: K/V gathers in attention,
+      a silent MLP, and sequence-scattered dK/dV in the backward.
+    </figcaption>
+  </figure>
+
+  <h2 id="ep">Expert parallelism</h2>
+  <p>
+    In a mixture-of-experts layer the MLP becomes four experts, one per device
+    (<code>W_in[E_Z, D, F]</code>), and each token is routed to one of them. The
+    figure's tokens are small squares colored by their assigned expert: the
+    <strong>AllToAll dispatch</strong> is the moment every device sends every other
+    device the tokens that belong to it — watch the colors sort themselves into
+    lanes. The experts run an ordinary MLP on their guests, and a second
+    <strong>AllToAll</strong> sends every token home. The backward pass mirrors it:
+    token <em>gradients</em> AllToAll out to the experts, expert weight gradients
+    stay local (each expert owns its weights outright), and the attention weight
+    gradients AllReduce over the batch axis as in data parallelism.
+  </p>
+  <figure class="tpv-outer">
+    <tpviz-figure strategy="ep"></tpviz-figure>
+    <figcaption>
+      Expert parallelism over <code>Mesh({'Z': 4})</code>: router-colored tokens
+      crossing in the AllToAll, expert MLPs, and mirrored gradient AllToAlls.
+    </figcaption>
+  </figure>
+
+  <h2 id="pp">Pipeline parallelism</h2>
+  <p>
+    Pipeline parallelism shards the <em>layers</em>: stage 0 owns layer 1, stage 1
+    owns layer 2, and activations hop across the boundary with a single
+    point-to-point send — the cheapest communication in this whole article. The
+    catch is idleness: with one batch, each stage would wait on the other, so the
+    batch splits into four microbatches that chase each other through the pipe.
+    The Gantt chart under the lanes fills as you step: the staircase is the
+    pipeline filling, the empty corners are <strong>the bubble</strong>. Switch to
+    <em>+ Backward</em> and the gradients flow right-to-left through the same pipe —
+    each backward cell is drawn twice as wide because backward costs roughly twice
+    the compute, which is why the bubble grows during training.
+  </p>
+  <figure class="tpv-outer">
+    <tpviz-figure strategy="pp"></tpviz-figure>
+    <figcaption>
+      Pipeline parallelism, 2 stages × 4 microbatches: activations hop forward,
+      gradients hop back, and the Gantt chart shows who idles.
+    </figcaption>
+  </figure>
 
   <footer>
     <p class="muted">

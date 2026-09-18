@@ -86,7 +86,15 @@ def step_entry(seg, atlas) -> dict:
     }
     if step.microbatch is not None:
         entry["mb"] = step.microbatch
-    if hasattr(step, "tex"):
+    if kind == "StageCompute":
+        # PP scenes mark one step per tick and caption it with every stage's
+        # work — that caption IS the program line
+        entry["eqh"] = step.caption or (
+            f"stage {step.stage} · layer {step.layer} · "
+            f"{'backward' if step.backward else 'forward'} mb{step.microbatch}"
+        )
+        entry["cap"] = None
+    elif hasattr(step, "tex"):
         entry["eqh"] = tex_to_html(step.tex())
     elif isinstance(step, SaveActivationStep):
         entry["eqh"] = tex_to_html(step.t.tex())

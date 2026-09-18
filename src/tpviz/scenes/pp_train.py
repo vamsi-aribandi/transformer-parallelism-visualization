@@ -63,6 +63,12 @@ class PPTrainScene(PPScene):
             tick_computes = [c for c in computes if c.tick == t]
             tick_sends = [p for p in sends if p.tick == t + 1]
 
+            lead = tick_computes[0]
+            lead.caption = " · ".join(
+                f"stage {c.stage} backprops mb{c.microbatch}" for c in tick_computes
+            )
+            self.mark_step(lead)
+
             # 1) the last stage picks its next finished microbatch from the Out
             #    dock — its activations become a GRADIENT deck (rose)
             for c in tick_computes:
@@ -115,6 +121,8 @@ class PPTrainScene(PPScene):
 
             # 4) P2P: the gradient hops UP-LEFT across the stage boundary
             for p in tick_sends:
+                self.flush_mark()
+                self.mark_step(p)
                 deck = self.stage_deck[p.src_stage]
                 self.stage_deck[p.src_stage] = None
                 self.play(self.strip.show(p.tex(), color=style.GRAD_STROKE, note=p.note_tex), run_time=0.3)
@@ -126,6 +134,7 @@ class PPTrainScene(PPScene):
                 )
                 self.stage_deck[p.dst_stage] = deck
                 self.comm_bump()
+            self.flush_mark()
 
     def bubble_beat(self):
         tag = Text(

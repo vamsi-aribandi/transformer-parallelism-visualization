@@ -42,7 +42,7 @@ lq-train-all:
 
 # ---- interactive web player ----
 web:
-	uv run python -m tpviz.web.export --only tp_train
+	uv run python -m tpviz.web.export --only dp_train,fsdp_train,tp_train,cp_train,ep_train,pp_train
 
 web-all:
 	uv run python -m tpviz.web.export

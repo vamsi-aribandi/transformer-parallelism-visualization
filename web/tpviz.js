@@ -496,7 +496,9 @@
       let sectionKey = "";
       this.visible.forEach((real, vi) => {
         const st = this.tl.steps[real];
-        const key = `${st.bwd ? "b" : "f"}|${st.layer}|${st.phase}`;
+        const key = st.phase === "pipeline"
+          ? `${st.bwd ? "b" : "f"}|pipeline`
+          : `${st.bwd ? "b" : "f"}|${st.layer}|${st.phase}`;
         if (key !== sectionKey) {
           sectionKey = key;
           const head = document.createElement("div");
@@ -1007,10 +1009,22 @@
         }
       };
 
+      const runP2P = async () => {
+        setHop(1, 1);
+        chunk(devVar(0), ...slotPt(0, 0, 0));
+        const fl = flyer(devVar(0), 1, 0);
+        const [x1, y1] = slotPt(0, 0, 0);
+        const [x2, y2] = slotPt(1, 0, 0);
+        await move(fl, x1, y1, x2, y2, 900);
+        fl.remove();
+        chunk(devVar(0), x2, y2, 1);
+      };
+
       if (kind === "AllGather") await runAG();
       else if (kind === "ReduceScatter") await runRS();
       else if (kind === "AllReduce") { await runRS("reduce-scatter · hop"); await sleep(500); await runAG("all-gather · hop"); }
       else if (kind === "AllToAll") await runA2A();
+      else if (kind === "P2PSend") await runP2P();
       if (this._algoToken !== token) return;
       await sleep(1600);
     }
