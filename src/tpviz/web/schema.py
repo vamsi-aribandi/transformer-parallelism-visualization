@@ -61,8 +61,13 @@ def _q(v: float) -> int:
 
 
 def _arc_samples(o, a: float, b: float) -> list | None:
-    """Interior (x, y) samples for a play interval whose path visibly bends
-    (collective crossflies with path_arc) — restores the arc in play mode."""
+    """Interior (x, y) samples for a play interval whose path GEOMETRICALLY
+    bends (collective crossflies with path_arc). Requires both axes to have
+    been tracked for this exact play — a single-axis move is a straight line
+    by construction (filling the other axis from stale state invents swoops:
+    that bug made CP's opening slide converge lanes to the middle and PP's
+    microbatches bounce toward their birth dock). Deviation is measured
+    perpendicular to the chord, so eased-but-straight diagonals don't count."""
     xs = ys = None
     for seg in o.tracks.get("x", []):
         if abs(seg[0] - a) < 1e-6 and abs(seg[1] - b) < 1e-6:
@@ -70,27 +75,20 @@ def _arc_samples(o, a: float, b: float) -> list | None:
     for seg in o.tracks.get("y", []):
         if abs(seg[0] - a) < 1e-6 and abs(seg[1] - b) < 1e-6:
             ys = seg[2]
-    if not xs and not ys:
+    if not xs or not ys or len(xs) != len(ys) or len(xs) < 3:
         return None
-    n = max(len(xs) if xs else 0, len(ys) if ys else 0)
-    if n < 3:
+    cx, cy = xs[-1] - xs[0], ys[-1] - ys[0]
+    chord = (cx * cx + cy * cy) ** 0.5
+    if chord < 1e-6:
         return None
-    xs = xs or [o.spec["x0"]] * n
-    ys = ys or [o.spec["y0"]] * n
-    if len(xs) != n or len(ys) != n:
-        return None
-    dev = 0.0
-    for k in range(1, n - 1):
-        u = k / (n - 1)
-        dev = max(
-            dev,
-            abs(xs[k] - (xs[0] + (xs[-1] - xs[0]) * u)),
-            abs(ys[k] - (ys[0] + (ys[-1] - ys[0]) * u)),
-        )
+    dev = max(
+        abs(cx * (ys[k] - ys[0]) - cy * (xs[k] - xs[0])) / chord
+        for k in range(1, len(xs) - 1)
+    )
     if dev < 0.06:
         return None
     out = []
-    for k in range(1, n - 1):
+    for k in range(1, len(xs) - 1):
         out += [_q(xs[k]), _q(ys[k])]
     return out
 
