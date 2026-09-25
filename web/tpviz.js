@@ -352,7 +352,6 @@
         .sort((a, b) => (a.spec.z - b.spec.z) || (a.i - b.i))
         .forEach(({ spec, i }) => {
           const el = drawObject(spec);
-          el.style.display = "none";
           if (spec.tip !== undefined) {
             el.classList.add("tpv-hit");
             el.dataset.tip = spec.tip;
@@ -361,7 +360,10 @@
           this.scene.appendChild(el);
           this.els[i] = el;
         });
+      // fit BEFORE hiding: Firefox's getBBox() returns an empty rect for
+      // display:none elements, which would leave every tensor unscaled
       this.els.forEach(applyFit);
+      this.els.forEach((el) => { el.style.display = "none"; });
 
       this.band = document.createElement("div");
       this.band.className = "tpv-band";
@@ -407,6 +409,8 @@
 
       this.tabIndex = 0;
       this.addEventListener("keydown", (ev) => {
+        // leave keys alone when a control has focus (speed slider, tabs, buttons)
+        if (ev.target !== this && ev.target.closest("input, select, button, a")) return;
         if (ev.key === "ArrowRight") { ev.preventDefault(); this.stop(); this.show(this.cur + 1); }
         else if (ev.key === "ArrowLeft") { ev.preventDefault(); this.stop(); this.show(this.cur - 1); }
         else if (ev.code === "Space") { ev.preventDefault(); this.playing ? this.stop() : this.play(); }
@@ -660,6 +664,8 @@
         }
         const outs = beat.out.map((obj) => this.els[obj]);
         await this.tween(moves, outs, beat.d * (2 / this.speed), token);
+        // a cancelled tween must not hide objects the new state just showed
+        if (this._token !== token) return;
         for (const el of outs) el.style.display = "none";
       }
     }

@@ -274,6 +274,51 @@ class TrainScene(ForwardPassScene):
         self.play(*anims, run_time=self.rt(1.0))
         self.acts[step.out.name] = outs
 
+    def handle_AllGatherStep(self, step):
+        if step.backward and step.src.kind == "kv":
+            self._kv_regather(step)
+            return
+        super().handle_AllGatherStep(step)
+
+    def _kv_regather(self, step):
+        """CP backward: the saved K/V SHARDS re-gather into full-sequence decks
+        beside the attention core (copies fly between stash rows; the shards
+        stay saved until the core backward consumes them)."""
+        key = self.canvas.station_key(step.layer, step.phase)
+        minis = self.stash.get((key, step.src.name), [])
+        dx = -0.5 if step.src.name == "K" else 0.5
+        results = []
+        for i in range(self.n_lanes()):
+            at = self.canvas.anchor(key, "core", i) + np.array([dx, 0.0, 0.0])
+            results.append(self.build_act_vis(step.out, i, at=at))
+        self.play(
+            self.strip.show(step.tex(), color=style.COMM_COLOR, note=step.note_tex),
+            run_time=self.rt(0.45),
+        )
+        copies, flights = [], []
+        for i, r in enumerate(results):
+            dest = r.get_center()
+            for j, m in enumerate(minis):
+                if j == i:
+                    continue
+                c = m[0].copy()
+                c.web_save = False  # a flight copy, not a saved activation
+                c.set_z_index(style.Z_FLYING)
+                copies.append(c)
+                flights.append(c.animate(path_arc=0.4).move_to(dest))
+        self.add(*copies)
+        self.play(
+            *flights,
+            *[Indicate(m, scale_factor=1.3, color=style.KV_STROKE) for m in minis],
+            run_time=self.rt(0.9),
+        )
+        self.play(
+            FadeOut(VGroup(*copies)), *[FadeIn(r) for r in results],
+            run_time=self.rt(0.5),
+        )
+        self.acts[step.out.name] = results
+        self.comm_bump()
+
     def handle_AttentionBwdStep(self, step: AttentionBwdStep):
         key = self.canvas.station_key(step.layer, step.phase)
         da = self.acts.pop(step.da.name)
@@ -300,6 +345,10 @@ class TrainScene(ForwardPassScene):
         for name in ("Q", "K", "V"):
             for m in self.stash.get((key, name), []):
                 stash_pulses.append(Indicate(m, scale_factor=1.4, color=style.KV_STROKE))
+        # CP: the re-gathered full K/V decks are consumed by the core backward
+        for name in ("K", "V"):
+            if name in self.acts:
+                anims += [FadeOut(g) for g in self.acts.pop(name)]
         self.play(
             self.strip.show(step.tex(), color=style.GRAD_STROKE, note=step.note_tex),
             run_time=self.rt(0.4),
@@ -314,7 +363,10 @@ class TrainScene(ForwardPassScene):
             self.build_act_vis(step.out, i, at=self.canvas.anchor(key, "core", i))
             for i in range(self.n_lanes())
         ]
-        self.play(self.strip.show(step.tex(), color=style.GRAD_STROKE), run_time=self.rt(0.35))
+        self.play(
+            self.strip.show(step.tex(), color=style.GRAD_STROKE, note=step.note_tex),
+            run_time=self.rt(0.35),
+        )
         self.play(
             *[
                 ReplacementTransform(VGroup(parts[0][i], parts[1][i], parts[2][i]), outs[i])

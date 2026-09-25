@@ -122,14 +122,14 @@ def mlp_steps(cfg: StrategyConfig, x: LTensor, layer: int, out_name: str = "Out"
     w_in = make_weight(cfg, "W_in")
     w_out = make_weight(cfg, "W_out")
 
-    up_plan, tmp = plan_matmul(
-        x, w_in, "Tmp", "D", layer=layer, phase="mlp",
+    up_plan, z = plan_matmul(
+        x, w_in, "Z", "D", layer=layer, phase="mlp",
         prefer_reduce_scatter=cfg.prefer_reduce_scatter,
     )
     steps += up_plan
 
-    act = replace(tmp, name="Tmp")
-    steps.append(GeluStep(src=tmp, out=act, layer=layer, phase="mlp"))
+    act = replace(z, name="Tmp")
+    steps.append(GeluStep(src=z, out=act, layer=layer, phase="mlp"))
 
     down_plan, _ = plan_matmul(
         act, w_out, out_name, "F", layer=layer, phase="mlp",
@@ -158,9 +158,10 @@ def moe_steps(cfg: StrategyConfig, x: LTensor, layer: int, out_name: str = "Out"
 
     # Expert compute is local: each device multiplies its token group by its
     # expert's weights (batched over the co-sharded E dim, so no comms).
+    z = LTensor("Z", ("E", "S", "F"), {"E": axis}, kind="activation")
+    steps.append(MatMulStep(a=routed, b=w_in, out=z, contract="D", layer=layer, phase="moe"))
     tmp = LTensor("Tmp", ("E", "S", "F"), {"E": axis}, kind="activation")
-    steps.append(MatMulStep(a=routed, b=w_in, out=tmp, contract="D", layer=layer, phase="moe"))
-    steps.append(GeluStep(src=tmp, out=tmp, layer=layer, phase="moe"))
+    steps.append(GeluStep(src=z, out=tmp, layer=layer, phase="moe"))
     expert_out = LTensor("X", ("E", "S", "D"), {"E": axis}, kind="activation")
     steps.append(
         MatMulStep(a=tmp, b=w_out, out=expert_out, contract="F", layer=layer, phase="moe")

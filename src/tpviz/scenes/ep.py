@@ -173,13 +173,19 @@ class MoETokenMixin:
                 ReplacementTransform(routed[e], VGroup(*[t for t, _ in device_tokens]))
             )
             for tok, origin in device_tokens:
-                home_tokens[origin].append(tok)
+                home_tokens[origin].append((tok, e))
         self.play(*explode_anims, run_time=self.rt(0.6))
+        n_exp = self.cfg.moe.n_experts
         flights = []
         for origin in range(n):
             x = self.canvas.anchor(key, explode_at, origin)[0]
             pts = self._token_grid_positions(origin, x)
-            for k, tok in enumerate(home_tokens[origin]):
+            # tokens land back in their ORIGINAL slots: slot k held expert
+            # k % n_exp, so expert e's j-th returning token goes to e + n_exp*j
+            per_expert = [0] * n_exp
+            for tok, e in home_tokens[origin]:
+                k = e + n_exp * per_expert[e]
+                per_expert[e] += 1
                 flights.append(tok.animate(path_arc=-0.3).move_to(pts[k % len(pts)]))
         self.play(*flights, run_time=self.rt(1.7))
         outs = [
@@ -187,7 +193,10 @@ class MoETokenMixin:
             for i in range(n)
         ]
         self.play(
-            *[ReplacementTransform(VGroup(*home_tokens[i]), outs[i]) for i in range(n)],
+            *[
+                ReplacementTransform(VGroup(*[t for t, _ in home_tokens[i]]), outs[i])
+                for i in range(n)
+            ],
             run_time=self.rt(0.7),
         )
         self.acts[step.out.name] = outs

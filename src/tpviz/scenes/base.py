@@ -405,12 +405,7 @@ class ForwardPassScene(Scene):
             for name, m in zip(("Q", "K", "V"), minis):
                 per_name[name].append(m)
             anims.append(ReplacementTransform(src_vis[i], row))
-        self.play(
-            self.strip.show(
-                rf"{step.src.tex()} \,\to\, {step.q.tex()},\ {step.k.tex()},\ {step.v.tex()}"
-            ),
-            run_time=self.rt(0.4),
-        )
+        self.play(self.strip.show(step.tex()), run_time=self.rt(0.4))
         self.play(*anims, run_time=self.rt(0.8))
         self.acts.update(per_name)
 
@@ -438,8 +433,16 @@ class ForwardPassScene(Scene):
         self.set_tracker(step.out, self.canvas.anchor(key, "core", 0)[0])
 
     def handle_GeluStep(self, step: GeluStep):
-        self.play(self.strip.show(step.tex()), run_time=self.rt(0.35))
-        compute.animate_gelu(self, self.acts[step.src.name], run_time=self.rt(0.6))
+        color = style.GRAD_STROKE if step.backward else style.TEXT_COLOR
+        self.play(
+            self.strip.show(step.tex(), color=color, note=step.note_tex),
+            run_time=self.rt(0.35),
+        )
+        vis = self.acts.pop(step.src.name)
+        compute.animate_gelu(self, vis, run_time=self.rt(0.6))
+        # the gelu renames the tensor (Z -> Tmp forward, dTmp -> dZ backward)
+        self.acts[step.out.name] = vis
+        self.set_tracker(step.out, vis[0].get_center()[0], run_time=0.2)
 
     def handle_AllGatherStep(self, step: AllGatherStep):
         key = self.canvas.station_key(step.layer, step.phase)

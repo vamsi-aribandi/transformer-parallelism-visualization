@@ -78,6 +78,12 @@ class SplitQKVStep(Step):
     k: LTensor
     v: LTensor
 
+    def tex(self) -> str:
+        return (
+            rf"{self.src.tex()} \,\to\, "
+            rf"{self.q.tex()},\ {self.k.tex()},\ {self.v.tex()}"
+        )
+
 
 @dataclass(kw_only=True)
 class AttentionCoreStep(Step):
@@ -100,10 +106,11 @@ class GeluStep(Step):
 
     def tex(self) -> str:
         if self.backward:
-            # dTmp <- dTmp ⊙ gelu'(Tmp), evaluated at the saved pre-activation
+            # dZ = dTmp ⊙ gelu'(Z): the derivative is evaluated at the saved
+            # PRE-activation Z (the out tensor names it: dZ -> Z)
             from dataclasses import replace as _replace
 
-            base = _replace(self.src, name=self.src.name.removeprefix("d"),
+            base = _replace(self.out, name=self.out.name.removeprefix("d"),
                             kind="activation")
             return (
                 rf"{self.src.tex()} \odot \text{{gelu}}'({base.tex()})"

@@ -27,6 +27,31 @@
     <a href="https://jax-ml.github.io/scaling-book/">JAX scaling book</a>.
   </p>
 
+  <h2>How to read the notation</h2>
+  <p>
+    Everything here is written in the scaling book's sharding notation, and it takes
+    one sentence to learn: <strong>a subscript on a dimension names the mesh axis it
+    is split over</strong>. The devices form a <em>mesh</em> — <code>Mesh({'X': 4})</code>
+    is four devices along one axis named <code>X</code> — and
+    <code>In[B_X, T, D]</code> means the batch dimension <code>B</code> is sharded
+    four ways over <code>X</code>, so each device holds a
+    <code>[B/4, T, D]</code> slice. A dimension with no subscript is <em>not</em>
+    split: every device sees all of it. A tensor with no subscripts anywhere is
+    fully replicated.
+  </p>
+  <p>
+    One more piece of notation: a trailing <code>{U_X}</code> marks an
+    <strong>unreduced partial sum</strong> — each device holds a full-shaped tensor
+    that is only its <em>contribution</em> to the true result, and the shards must
+    still be summed over <code>X</code> (that sum is exactly what AllReduce and
+    ReduceScatter do). The dimension names used throughout, with the concrete sizes
+    the tooltips assume: <code>B=8</code> sequences, <code>T=128</code> tokens each,
+    <code>D=1024</code> the model (residual) width, <code>F=4096</code> the MLP
+    hidden width, <code>H=1024</code> the fused attention head dimension (all heads
+    concatenated — not the head count), and for the MoE section <code>E=4</code>
+    experts with <code>S=256</code> tokens routed to each. Everything is bf16.
+  </p>
+
   <h2>How to read the figures</h2>
   <p>
     Each figure is a small machine you can drive. <strong>Model depth runs left to
@@ -136,8 +161,12 @@
     never notices — tokens are independent there, so it runs without a word between
     devices. Attention is the whole story: every query must see every key and value,
     so <code>K</code> and <code>V</code> are <strong>AllGathered</strong> across the
-    sequence shards while <code>Q</code> stays local. In the backward pass the
-    gathered K/V come back to haunt us: every device produces gradient contributions
+    sequence shards while <code>Q</code> stays local. The gathered K/V are used and
+    dropped, not kept: saving full-sequence tensors on every device would be the
+    exact memory blowup this strategy exists to avoid, so the forward saves only
+    each device's own K/V <em>shard</em> and the backward pass re-gathers them —
+    the same trade FSDP makes with weights. Then the gathers come back to haunt us
+    a second way: every device produces gradient contributions
     for <em>all</em> tokens' keys and values, so <code>dK</code> and <code>dV</code>
     are partial sums that <strong>ReduceScatter</strong> back over the sequence — and
     the weight gradients AllReduce over the context axis, exactly like data

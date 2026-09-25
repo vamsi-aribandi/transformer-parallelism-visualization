@@ -252,16 +252,18 @@ class DocumentBuilder:
             entries.append(e)
             prev_end = seg_step.t1
 
-        fwd_tex = {}
+        # key by (layer, tex): both layers emit identical tex, so a bare tex
+        # match would send every layer-2 backward link to layer 1's forward
+        fwd_tex: dict[tuple[int, str], int] = {}
         for i, seg_step in enumerate(rec.steps):
             st = seg_step.step
             if not st.backward and hasattr(st, "tex"):
-                fwd_tex.setdefault(st.tex(), i)
+                fwd_tex.setdefault((st.layer, st.tex()), i)
         for i, seg_step in enumerate(rec.steps):
             st = seg_step.step
             if st.backward and st.note_tex:
-                for tex, k in fwd_tex.items():
-                    if st.note_tex.endswith(tex):
+                for (layer, tex), k in fwd_tex.items():
+                    if layer == st.layer and st.note_tex.endswith(tex):
                         entries[i]["fwdStep"] = k
                         break
 

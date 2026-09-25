@@ -28,8 +28,9 @@ def test_backward_is_twice_the_forward_compute():
 def test_forward_saves_activations():
     steps = train_steps(configs.DP)
     saves = [s for s in steps if isinstance(s, SaveActivationStep)]
-    # per layer: 4 matmul inputs + Q + K + V = 7
-    assert len(saves) == 14
+    # per layer: 4 matmul inputs + Q + K + V + the pre-gelu Z = 8
+    assert len(saves) == 16
+    assert [s.t.name for s in saves if s.layer == 1].count("Z") == 1
     grad_init = [s for s in steps if isinstance(s, GradInitStep)]
     assert len(grad_init) == 1 and grad_init[0].out.name == "dOut"
     # every save happens before the backward pass starts
@@ -79,6 +80,19 @@ def test_cp_backward_scatters_kv_grads_and_allreduces_weight_grads():
     assert [(r.src.name, r.scatter_dim) for r in rss] == [("dK", "T"), ("dV", "T")]
     assert [a.src.name for a in ars] == ["dW_out", "dW_in", "dW_o", "dW_qkv"]
     assert all(s.axis == "X" for s in layer2)
+    # the backward re-gathers the SAVED K/V shards (forward saved shards, not
+    # the gathered full-sequence tensors)
+    ags = [s for s in layer2 if isinstance(s, AllGatherStep)]
+    assert [(a.src.name, a.dim) for a in ags] == [("K", "T"), ("V", "T")]
+    assert all(a.src.sharding.get("T") == "X" for a in ags)
+
+
+def test_cp_forward_saves_kv_shards_not_gathered_kv():
+    steps = train_steps(configs.CP)
+    saves = [s for s in steps if isinstance(s, SaveActivationStep)]
+    kv_saves = [s for s in saves if s.t.name in ("K", "V")]
+    assert len(kv_saves) == 4
+    assert all(s.t.sharding.get("T") == "X" for s in kv_saves)
 
 
 def test_ep_backward_alltoalls_token_grads():

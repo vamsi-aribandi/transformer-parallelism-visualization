@@ -35,6 +35,7 @@ from tpviz.core.steps import (
     P2PSendStep,
     ReduceScatterStep,
     SaveActivationStep,
+    SplitQKVStep,
     StageComputeStep,
     Step,
 )
@@ -53,6 +54,9 @@ class LayerRecord:
     mlp_in: LTensor | None = None  # input to the W_in matmul (MoE: routed tokens)
     tmp: LTensor | None = None  # input to the W_out matmul
     out: LTensor | None = None  # the layer's block output
+    k_shard: LTensor | None = None  # pre-gather K (CP saves the shard, not the gathered form)
+    v_shard: LTensor | None = None
+    fwd_split: SplitQKVStep | None = None
     fwd_mm: dict[str, MatMulStep] = field(default_factory=dict)  # weight name -> fwd matmul
     fwd_attn: AttentionCoreStep | None = None
     fwd_coll: list[Step] = field(default_factory=list)  # this layer's forward collectives
@@ -89,10 +93,28 @@ def annotate_forward(cfg: StrategyConfig) -> tuple[list[Step], dict[int, LayerRe
                 rec.mlp_in = step.a
             elif step.b.name == "W_out":
                 rec.tmp = step.a
+        elif isinstance(step, GeluStep):
+            # the gelu backward needs gelu'(Z) at the PRE-activation — save it
+            anchor = "mid" if step.phase == "mlp" else "tokens"
+            steps.append(save(step.src, step.layer, step.phase, anchor))
+        elif isinstance(step, SplitQKVStep):
+            rec.fwd_split = step
         elif isinstance(step, AttentionCoreStep):
-            for spread, t in zip((-1, 0, 1), (step.q, step.k, step.v)):
+            # under CP, K/V were AllGathered to full sequence length just before
+            # the core; saving the gathered forms would replicate the whole
+            # sequence on every device — save the pre-gather SHARDS instead
+            # (backward re-gathers them, like FSDP re-gathers weights)
+            def _pre_gather(t: LTensor) -> LTensor:
+                for f in rec.fwd_coll:
+                    if (isinstance(f, AllGatherStep) and f.src.kind == "kv"
+                            and f.out.name == t.name and f.out.sharding == t.sharding):
+                        return f.src
+                return t
+            k_saved, v_saved = _pre_gather(step.k), _pre_gather(step.v)
+            for spread, t in zip((-1, 0, 1), (step.q, k_saved, v_saved)):
                 steps.append(save(t, step.layer, step.phase, "core", spread))
             rec.q, rec.k, rec.v = step.q, step.k, step.v
+            rec.k_shard, rec.v_shard = k_saved, v_saved
             rec.fwd_attn = step
         if hasattr(step, "out") and getattr(step.out, "kind", None) == "activation":
             rec.out = step.out
@@ -211,23 +233,25 @@ def backward_mlp(cfg: StrategyConfig, rec: LayerRecord, d_out: LTensor, layer: i
     _tag_note(s, rec, "W_out")
     steps += s
 
+    z_fwd = replace(dtmp, name="Z", kind="activation")
     tmp_fwd = replace(dtmp, name="Tmp", kind="activation")
+    dz = replace(dtmp, name="dZ")
     steps.append(GeluStep(
-        src=dtmp, out=dtmp, layer=layer, phase=phase,
-        caption="through the gelu: multiply by its derivative at the saved input",
-        note_tex=FROM_FWD + GeluStep(src=tmp_fwd, out=tmp_fwd).tex(),
+        src=dtmp, out=dz, layer=layer, phase=phase,
+        caption="through the gelu: multiply by its derivative at the saved pre-activation Z",
+        note_tex=FROM_FWD + GeluStep(src=z_fwd, out=tmp_fwd).tex(),
     ))
 
     s, dx = plan_matmul(
-        dtmp, w_in.transposed(), "dX", "F", layer=layer, phase=phase,
+        dz, w_in.transposed(), "dX", "F", layer=layer, phase=phase,
         scatter_dim="D", out_kind="grad", prefer_reduce_scatter=cfg.prefer_reduce_scatter,
     )
     _tag_note(s, rec, "W_in")
     steps += s
-    dtmp_used = _gathered_form(s, dtmp)
+    dz_used = _gathered_form(s, dz)
 
     s, _ = plan_matmul(
-        rec.mlp_in, dtmp_used, "dW_in", ("B", "T"), layer=layer, phase=phase,
+        rec.mlp_in, dz_used, "dW_in", ("B", "T"), layer=layer, phase=phase,
         scatter_dim=_wt_scatter_dim(cfg, "W_in"), out_kind="grad",
         prefer_reduce_scatter=cfg.prefer_reduce_scatter,
     )
@@ -259,17 +283,19 @@ def backward_moe(cfg: StrategyConfig, rec: LayerRecord, d_out: LTensor, layer: i
     dw_out = LTensor("dW_out", ("E", "F", "D"), {"E": axis}, kind="grad")
     steps.append(MatMulStep(a=rec.tmp, b=dxe, out=dw_out, contract="S",
                             layer=layer, phase=phase, note_tex=note_out))
+    z_fwd = replace(dtmp, name="Z", kind="activation")
     tmp_fwd = replace(dtmp, name="Tmp", kind="activation")
+    dz = replace(dtmp, name="dZ")
     steps.append(GeluStep(
-        src=dtmp, out=dtmp, layer=layer, phase=phase,
-        caption="through the gelu: multiply by its derivative at the saved input",
-        note_tex=FROM_FWD + GeluStep(src=tmp_fwd, out=tmp_fwd).tex(),
+        src=dtmp, out=dz, layer=layer, phase=phase,
+        caption="through the gelu: multiply by its derivative at the saved pre-activation Z",
+        note_tex=FROM_FWD + GeluStep(src=z_fwd, out=tmp_fwd).tex(),
     ))
     dtok = LTensor("dX", ("E", "S", "D"), {"E": axis}, kind="grad")
-    steps.append(MatMulStep(a=dtmp, b=w_in.transposed(), out=dtok, contract="F",
+    steps.append(MatMulStep(a=dz, b=w_in.transposed(), out=dtok, contract="F",
                             layer=layer, phase=phase, note_tex=note_in))
     dw_in = LTensor("dW_in", ("E", "D", "F"), {"E": axis}, kind="grad")
-    steps.append(MatMulStep(a=rec.mlp_in, b=dtmp, out=dw_in, contract="S",
+    steps.append(MatMulStep(a=rec.mlp_in, b=dz, out=dw_in, contract="S",
                             layer=layer, phase=phase, note_tex=note_in))
 
     dx = LTensor("dX", ("B", "T", "D"), cfg.act_sharding, kind="grad")
@@ -310,6 +336,18 @@ def backward_attention(cfg: StrategyConfig, rec: LayerRecord, d_out: LTensor, la
     ctx = cfg.kv_context_axis
     cp_active = ctx is not None and rec.q.axis_of("T") == ctx
     if cp_active:
+        # the forward saved only the K/V SHARDS — re-gather them for the core
+        # backward, exactly the gather the forward did (cf. FSDP's re-gather)
+        for shard, full in ((rec.k_shard, rec.k), (rec.v_shard, rec.v)):
+            if shard is not None and shard.sharding != full.sharding:
+                fwd = next((f for f in rec.fwd_coll
+                            if isinstance(f, AllGatherStep) and f.src.kind == "kv"
+                            and f.src.name == shard.name), None)
+                steps.append(AllGatherStep(
+                    src=shard, out=full, axis=ctx, dim="T", layer=layer, phase=phase,
+                    note_tex=(r"\text{same gather as forward (saved K/V shards"
+                              r" re-gathered):}\quad " + fwd.tex()) if fwd else None,
+                ))
         # every query shard contributes to every dK/dV token: partial sums
         dk = replace(rec.k.grad(), name="dK", partial=frozenset({ctx}))
         dv = replace(rec.v.grad(), name="dV", partial=frozenset({ctx}))
@@ -328,7 +366,10 @@ def backward_attention(cfg: StrategyConfig, rec: LayerRecord, d_out: LTensor, la
                                       note_tex=(FROM_FWD + rec.fwd_attn.tex()) if rec.fwd_attn else None))
 
     dqkv = replace(dq, name="dQKV")
-    steps.append(MergeQKVStep(q=dq, k=dk, v=dv, out=dqkv, layer=layer, phase=phase))
+    steps.append(MergeQKVStep(
+        q=dq, k=dk, v=dv, out=dqkv, layer=layer, phase=phase,
+        note_tex=(FROM_FWD + rec.fwd_split.tex()) if rec.fwd_split else None,
+    ))
 
     s, dx = plan_matmul(
         dqkv, w_qkv.transposed(), "dX", "H", layer=layer, phase=phase,

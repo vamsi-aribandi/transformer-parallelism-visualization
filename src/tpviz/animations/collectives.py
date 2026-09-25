@@ -29,11 +29,17 @@ def _body(mobj: Mobject) -> Mobject:
 
 
 def _flight(
-    src: Mobject, dest_center, arc: float = 0.55, shrink: float = 0.85
+    src: Mobject, dest_center, arc: float = 0.55, scale: float = 0.85,
+    opacity: float | None = None,
 ) -> tuple[Mobject, AnimationGroup]:
     c = _body(src).copy()
+    # style the copy BEFORE building the .animate chain: the builder snapshots
+    # its start state on creation, so later mutations would be animated away
+    if opacity is not None:
+        c.set_opacity(opacity)
+    c.scale(scale)
     c.set_z_index(style.Z_FLYING)
-    anim = c.animate(path_arc=arc).move_to(dest_center).scale(shrink)
+    anim = c.animate(path_arc=arc).move_to(dest_center)
     return c, anim
 
 
@@ -82,9 +88,7 @@ def animate_exchange_resolve(
         for i, partial in enumerate(partials):
             if i == j:
                 continue
-            c, anim = _flight(partial, dest, arc=0.35, shrink=0.3)
-            c.set_opacity(0.3)
-            c.scale(0.6)
+            c, anim = _flight(partial, dest, arc=0.35, scale=0.35, opacity=0.3)
             copies.append(c)
             flights.append(anim)
     scene.add(*copies)
