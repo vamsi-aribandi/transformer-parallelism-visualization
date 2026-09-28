@@ -103,8 +103,17 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--only", help="comma-separated timeline names, e.g. tp_fwd,tp_train")
     ap.add_argument("--json-only", action="store_true")
+    ap.add_argument("--page-only", action="store_true",
+                    help="skip recording: rebuild index.html from the existing dist/data.json")
     args = ap.parse_args()
     only = args.only.split(",") if args.only else None
+
+    if args.page_only:
+        doc = json.loads((DIST / "data.json").read_text())
+        page = build_page(doc)
+        (DIST / "index.html").write_text(page)
+        print(f"index.html: {(DIST / 'index.html').stat().st_size / 1e6:.2f} MB (from existing data.json)")
+        return
 
     doc = build_document(only)
     errs = validate(doc)

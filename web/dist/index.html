@@ -125,6 +125,11 @@ body {
   font-family: var(--sans); font-size: 13.5px; font-weight: 600;
 }
 .mark { color: var(--accent); font-size: 16px; }
+.masthead-home {
+  display: flex; align-items: center; gap: 10px;
+  color: inherit; text-decoration: none;
+}
+.masthead-home:hover .site { color: var(--accent); }
 #theme-toggle {
   margin-left: auto;
   background: none; border: 1px solid var(--line); border-radius: 999px;
@@ -427,8 +432,10 @@ figcaption {
 <body>
 <header class="masthead">
   <div class="masthead-inner">
-    <span class="mark">⊞</span>
-    <span class="site">Distributed Transformer Training</span>
+    <a class="masthead-home" href="/">
+      <span class="mark">⊞</span>
+      <span class="site">vamsi aribandi</span>
+    </a>
     <button id="theme-toggle" title="toggle light / dark">◐</button>
   </div>
 </header>
