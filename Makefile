@@ -47,6 +47,17 @@ web:
 web-all:
 	uv run python -m tpviz.web.export
 
+# rebuild dist/index.html + data.js from the existing data.json (no re-record)
+web-page:
+	uv run python -m tpviz.web.export --page-only
+
+# sync the embeddable figure assets into the personal site's blog post
+SITE = ../vamsi-aribandi.github.io
+site: web-page
+	cp web/style.css   $(SITE)/static/tpviz/tpviz.css
+	cp web/tpviz.js    $(SITE)/static/tpviz/tpviz.js
+	cp web/dist/data.js $(SITE)/static/tpviz/data.js
+
 CHROME = /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
 # usage: make web-qa S=tp M=train T=42.5
 web-qa:
@@ -55,4 +66,4 @@ web-qa:
 		--screenshot=qa/web/step$(T).png --virtual-time-budget=4000 \
 		"file://$(PWD)/web/dist/index.html#step=$(T)&theme=dark"
 
-.PHONY: web web-all web-qa
+.PHONY: web web-all web-page site web-qa

@@ -8,7 +8,11 @@
    play mode. The canvas follows the page theme via --cv-* variables. */
 
 (() => {
-  const DOC = JSON.parse(document.getElementById("tpviz-data").textContent);
+  // data source: the inline JSON tag (standalone page) or a separately loaded
+  // data.js that sets window.TPVIZ_DATA (embedded in another site)
+  const dataEl = document.getElementById("tpviz-data");
+  const DOC = dataEl ? JSON.parse(dataEl.textContent) : window.TPVIZ_DATA;
+  if (!DOC) return;
   const NS = "http://www.w3.org/2000/svg";
   const FRAME_W = DOC.frame[0], FRAME_H = DOC.frame[1];
   const SX = (v) => v + FRAME_W / 2;
@@ -1039,18 +1043,22 @@
   customElements.define("tpviz-figure", TPVizFigure);
 
   /* ------------------------------------------------------------- theme */
-  const root = document.documentElement;
-  const hashTheme = new URLSearchParams(location.hash.slice(1)).get("theme");
-  let saved = null;
-  try { saved = localStorage.getItem("tpviz-theme"); } catch (e) {}
-  if (hashTheme) root.dataset.theme = hashTheme;
-  else if (saved) root.dataset.theme = saved;
-  document.addEventListener("click", (ev) => {
-    if (!ev.target.closest("#theme-toggle")) return;
-    const dark = root.dataset.theme
-      ? root.dataset.theme === "dark"
-      : matchMedia("(prefers-color-scheme: dark)").matches;
-    root.dataset.theme = dark ? "light" : "dark";
-    try { localStorage.setItem("tpviz-theme", root.dataset.theme); } catch (e) {}
-  });
+  // only the standalone page owns a theme toggle; embedded in a host site the
+  // figures follow the host's prefers-color-scheme untouched
+  if (document.getElementById("theme-toggle")) {
+    const root = document.documentElement;
+    const hashTheme = new URLSearchParams(location.hash.slice(1)).get("theme");
+    let saved = null;
+    try { saved = localStorage.getItem("tpviz-theme"); } catch (e) {}
+    if (hashTheme) root.dataset.theme = hashTheme;
+    else if (saved) root.dataset.theme = saved;
+    document.addEventListener("click", (ev) => {
+      if (!ev.target.closest("#theme-toggle")) return;
+      const dark = root.dataset.theme
+        ? root.dataset.theme === "dark"
+        : matchMedia("(prefers-color-scheme: dark)").matches;
+      root.dataset.theme = dark ? "light" : "dark";
+      try { localStorage.setItem("tpviz-theme", root.dataset.theme); } catch (e) {}
+    });
+  }
 })();

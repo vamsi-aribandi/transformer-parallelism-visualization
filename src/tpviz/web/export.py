@@ -85,6 +85,13 @@ def build_document(only: list[str] | None = None) -> dict:
     return builder.build(meta)
 
 
+def write_embed_data(doc: dict) -> None:
+    """dist/data.js: the document as a window global, for embedding the figures
+    in a host site (script src) instead of the standalone page's inline tag."""
+    payload = json.dumps(doc, separators=(",", ":")).replace("</", "<\\/")
+    (DIST / "data.js").write_text(f"window.TPVIZ_DATA={payload};")
+
+
 def build_page(doc: dict) -> str | None:
     template = WEB / "article.html"
     if not template.exists():
@@ -112,6 +119,7 @@ def main():
         doc = json.loads((DIST / "data.json").read_text())
         page = build_page(doc)
         (DIST / "index.html").write_text(page)
+        write_embed_data(doc)
         print(f"index.html: {(DIST / 'index.html').stat().st_size / 1e6:.2f} MB (from existing data.json)")
         return
 
@@ -123,6 +131,7 @@ def main():
     DIST.mkdir(parents=True, exist_ok=True)
     data_path = DIST / "data.json"
     data_path.write_text(json.dumps(doc, separators=(",", ":")))
+    write_embed_data(doc)
     size = data_path.stat().st_size
     print(f"data.json: {size / 1e6:.2f} MB, timelines: {list(doc['timelines'])}")
     assert size < 8_000_000, "document over budget"

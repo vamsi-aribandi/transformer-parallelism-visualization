@@ -13,9 +13,9 @@
   --card-2: #ebdbb2;
   --accent: #af3a03;
   --rose: #9d0006;
-  --serif: "Source Serif 4", Georgia, "Times New Roman", serif;
-  --sans: "Inter", -apple-system, "Segoe UI", sans-serif;
-  --mono: "JetBrains Mono", ui-monospace, monospace;
+  --serif: Georgia, "Times New Roman", serif;
+  --sans: -apple-system, "Segoe UI", "Helvetica Neue", sans-serif;
+  --mono: "JetBrains Mono", "Fira Code", "Source Code Pro", ui-monospace, Consolas, monospace;
 
   /* canvas (light) */
   --cv-bg: #f9f5d7;
@@ -86,16 +86,19 @@
   }
 }
 
-* { margin: 0; padding: 0; box-sizing: border-box; }
-html { scroll-behavior: smooth; }
-body {
+.tpv-page, .tpv-page *, .tpv, .tpv *, .tpv-outer, .tpv-outer *,
+.tpv-tooltip, .tpv-tooltip * { margin: 0; padding: 0; box-sizing: border-box; }
+body.tpv-page {
   background: var(--paper);
   color: var(--ink);
   font-family: var(--serif);
   font-size: 18px;
   line-height: 1.65;
   transition: background 0.25s, color 0.25s;
+  --serif: "Source Serif 4", Georgia, "Times New Roman", serif;
+  --sans: "Inter", -apple-system, "Segoe UI", sans-serif;
 }
+.tpv-page { scroll-behavior: smooth; }
 
 /* math-as-text */
 .meq { font-family: var(--serif); font-style: italic; white-space: nowrap; }
@@ -104,52 +107,52 @@ body {
 .meq sub, .meq sup { font-size: 0.72em; }
 
 /* ------------------------------------------------------------- masthead */
-.masthead {
+.tpv-page .masthead {
   position: sticky; top: 0; z-index: 50;
   background: color-mix(in srgb, var(--paper) 90%, transparent);
   backdrop-filter: blur(10px);
   border-bottom: 1px solid var(--line);
 }
-.masthead-inner {
+.tpv-page .masthead-inner {
   max-width: 1120px; margin: 0 auto; padding: 10px 24px;
   display: flex; align-items: center; gap: 10px;
   font-family: var(--sans); font-size: 13.5px; font-weight: 600;
 }
-.mark { color: var(--accent); font-size: 16px; }
-.masthead-home {
+.tpv-page .mark { color: var(--accent); font-size: 16px; }
+.tpv-page .masthead-home {
   display: flex; align-items: center; gap: 10px;
   color: inherit; text-decoration: none;
 }
-.masthead-home:hover .site { color: var(--accent); }
-#theme-toggle {
+.tpv-page .masthead-home:hover .site { color: var(--accent); }
+.tpv-page #theme-toggle {
   margin-left: auto;
   background: none; border: 1px solid var(--line); border-radius: 999px;
   width: 30px; height: 30px; cursor: pointer; color: var(--ink-2); font-size: 15px;
 }
-#theme-toggle:hover { color: var(--ink); }
+.tpv-page #theme-toggle:hover { color: var(--ink); }
 
 /* -------------------------------------------------------------- article */
-article { max-width: 720px; margin: 0 auto; padding: 48px 24px 120px; }
-h1 {
+.tpv-page article { max-width: 720px; margin: 0 auto; padding: 48px 24px 120px; }
+.tpv-page h1 {
   font-size: 42px; line-height: 1.15; font-weight: 600;
   letter-spacing: -0.015em; margin: 18px 0 14px;
 }
-.dek { font-size: 21px; color: var(--ink-2); margin-bottom: 40px; line-height: 1.5; }
-h2 {
+.tpv-page .dek { font-size: 21px; color: var(--ink-2); margin-bottom: 40px; line-height: 1.5; }
+.tpv-page h2 {
   font-family: var(--sans); font-size: 24px; font-weight: 650;
   letter-spacing: -0.01em; margin: 52px 0 14px;
 }
-p { margin: 0 0 18px; }
-a { color: var(--accent); text-decoration-color: color-mix(in srgb, var(--accent) 40%, transparent); }
-a:hover { text-decoration-color: var(--accent); }
-code {
+.tpv-page p { margin: 0 0 18px; }
+.tpv-page a { color: var(--accent); text-decoration-color: color-mix(in srgb, var(--accent) 40%, transparent); }
+.tpv-page a:hover { text-decoration-color: var(--accent); }
+.tpv-page code {
   font-family: var(--mono); font-size: 0.82em;
   background: var(--card); border: 1px solid var(--line);
   border-radius: 5px; padding: 0.08em 0.35em;
 }
-.muted { color: var(--ink-2); }
-strong { font-weight: 600; }
-footer { margin-top: 72px; border-top: 1px solid var(--line); padding-top: 20px; font-size: 15px; }
+.tpv-page .muted { color: var(--ink-2); }
+.tpv-page strong { font-weight: 600; }
+.tpv-page footer { margin-top: 72px; border-top: 1px solid var(--line); padding-top: 20px; font-size: 15px; }
 
 .sw {
   display: inline-block; width: 12px; height: 9px; border-radius: 2px;
@@ -165,9 +168,17 @@ footer { margin-top: 72px; border-top: 1px solid var(--line); padding-top: 20px;
   width: min(1140px, calc(100vw - 32px));
   margin: 30px calc((min(1140px, 100vw - 32px) - 100%) / -2) 44px;
 }
-figcaption {
+.tpv-page figcaption {
   font-family: var(--sans); font-size: 13.5px; color: var(--ink-2);
   margin-top: 10px; text-align: center;
+}
+/* embedded in a host site: caption inherits the host theme; center it */
+body:not(.tpv-page) .tpv-outer figcaption { text-align: center; margin-top: 10px; }
+/* embedded: figure chrome adopts the host's monospace voice, the canvas keeps
+   a neutral sans for its in-diagram labels */
+body:not(.tpv-page) .tpv { --sans: var(--mono); }
+body:not(.tpv-page) .tpv-canvas text {
+  font-family: -apple-system, "Segoe UI", "Helvetica Neue", sans-serif;
 }
 
 .tpv {
