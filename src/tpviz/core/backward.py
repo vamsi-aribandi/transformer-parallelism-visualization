@@ -22,7 +22,7 @@ from dataclasses import dataclass, field, replace
 
 from tpviz.core.engine import plan_matmul
 from tpviz.core.mesh import StrategyConfig
-from tpviz.core.model import forward_steps, make_weight
+from tpviz.core.model import forward_steps, make_weight, routed_tokens, stage_send
 from tpviz.core.steps import (
     AllGatherStep,
     AllToAllStep,
@@ -54,6 +54,7 @@ class LayerRecord:
     mlp_in: LTensor | None = None  # input to the W_in matmul (MoE: routed tokens)
     tmp: LTensor | None = None  # input to the W_out matmul
     out: LTensor | None = None  # the layer's block output
+    routed: LTensor | None = None  # MoE: the dispatch AllToAll's output (pre-gather form)
     k_shard: LTensor | None = None  # pre-gather K (CP saves the shard, not the gathered form)
     v_shard: LTensor | None = None
     fwd_split: SplitQKVStep | None = None
@@ -81,6 +82,8 @@ def annotate_forward(cfg: StrategyConfig) -> tuple[list[Step], dict[int, LayerRe
         rec = recs.get(step.layer)
         if isinstance(step, (AllGatherStep, ReduceScatterStep, AllToAllStep)) and rec is not None:
             rec.fwd_coll.append(step)
+            if isinstance(step, AllToAllStep) and step.direction == "dispatch":
+                rec.routed = step.out
         if isinstance(step, MatMulStep) and step.b.kind == "weight":
             anchor = "slot0" if step.b.name in ("W_qkv", "W_in") else "slot1"
             steps.append(save(step.a, step.layer, step.phase, anchor))
@@ -194,8 +197,8 @@ def _tag_collective_notes(steps: list[Step], rec: LayerRecord, cfg: StrategyConf
         elif isinstance(st, AllReduceStep) and st.src.name.startswith("dW"):
             w = make_weight(cfg, st.src.name[1:])
             st.note_tex = (
-                rf"\text{{forward replicated}}\ {w.tex()}\ "
-                rf"\text{{--- every shard's gradient must be summed}}"
+                rf"\text{{forward replicated}}\ {w.tex()}\ \text{{over}}\ {st.axis}\ "
+                rf"\text{{--- every replica's gradient must be summed}}"
             )
         elif isinstance(st, AllToAllStep):
             want = "combine" if st.direction == "dispatch" else "dispatch"
@@ -205,9 +208,14 @@ def _tag_collective_notes(steps: list[Step], rec: LayerRecord, cfg: StrategyConf
                     break
 
 
-def _wt_scatter_dim(cfg: StrategyConfig, name: str) -> str | None:
+def _wt_scatter(cfg: StrategyConfig, name: str) -> dict:
+    """plan_matmul kwargs resolving a weight gradient's partial sum back onto
+    the layout the weight lives in: ReduceScatter along the axis that shards
+    its first sharded dim (FSDP's data axis); other partial axes AllReduce."""
     sharding = cfg.wt_sharding.get(name, {})
-    return next(iter(sharding), None)
+    for dim, axes in sharding.items():
+        return {"scatter_dim": dim, "scatter_axis": axes[0]}
+    return {"scatter_dim": None}
 
 
 def backward_mlp(cfg: StrategyConfig, rec: LayerRecord, d_out: LTensor, layer: int
@@ -227,7 +235,7 @@ def backward_mlp(cfg: StrategyConfig, rec: LayerRecord, d_out: LTensor, layer: i
 
     s, _ = plan_matmul(
         rec.tmp, d_out_used, "dW_out", ("B", "T"), layer=layer, phase=phase,
-        scatter_dim=_wt_scatter_dim(cfg, "W_out"), out_kind="grad",
+        **_wt_scatter(cfg, "W_out"), out_kind="grad",
         prefer_reduce_scatter=cfg.prefer_reduce_scatter,
     )
     _tag_note(s, rec, "W_out")
@@ -252,7 +260,7 @@ def backward_mlp(cfg: StrategyConfig, rec: LayerRecord, d_out: LTensor, layer: i
 
     s, _ = plan_matmul(
         rec.mlp_in, dz_used, "dW_in", ("B", "T"), layer=layer, phase=phase,
-        scatter_dim=_wt_scatter_dim(cfg, "W_in"), out_kind="grad",
+        **_wt_scatter(cfg, "W_in"), out_kind="grad",
         prefer_reduce_scatter=cfg.prefer_reduce_scatter,
     )
     _tag_note(s, rec, "W_in")
@@ -265,24 +273,38 @@ def backward_mlp(cfg: StrategyConfig, rec: LayerRecord, d_out: LTensor, layer: i
 
 def backward_moe(cfg: StrategyConfig, rec: LayerRecord, d_out: LTensor, layer: int
                  ) -> tuple[list[Step], LTensor]:
-    """Token gradients AllToAll to their experts, expert backward, AllToAll home."""
+    """Token gradients AllToAll to their experts, expert backward, AllToAll home.
+
+    The expert matmuls' backward is planned by the engine, so under a
+    multi-axis mesh the expert weights re-gather jit (FSDP), the token grads
+    gather / scatter over the tensor axis (TP), and the expert weight grads
+    ReduceScatter over the data axis but never AllReduce over the expert axis
+    (each expert owns its weights outright)."""
     assert cfg.moe is not None
     phase, axis = "moe", cfg.moe.axis
     steps: list[Step] = []
     w_in, w_out = make_weight(cfg, "W_in"), make_weight(cfg, "W_out")
 
-    dxe = LTensor("dX", ("E", "S", "D"), {"E": axis}, kind="grad")
+    dxe = (rec.routed or routed_tokens(cfg, d_out)).grad().renamed("dX")
     steps.append(AllToAllStep(src=d_out, out=dxe, axis=axis, direction="dispatch",
                               layer=layer, phase=phase))
 
-    note_out = (FROM_FWD + rec.fwd_mm["W_out"].tex()) if "W_out" in rec.fwd_mm else None
-    note_in = (FROM_FWD + rec.fwd_mm["W_in"].tex()) if "W_in" in rec.fwd_mm else None
-    dtmp = LTensor("dTmp", ("E", "S", "F"), {"E": axis}, kind="grad")
-    steps.append(MatMulStep(a=dxe, b=w_out.transposed(), out=dtmp, contract="D",
-                            layer=layer, phase=phase, note_tex=note_out))
-    dw_out = LTensor("dW_out", ("E", "F", "D"), {"E": axis}, kind="grad")
-    steps.append(MatMulStep(a=rec.tmp, b=dxe, out=dw_out, contract="S",
-                            layer=layer, phase=phase, note_tex=note_out))
+    s, dtmp = plan_matmul(
+        dxe, w_out.transposed(), "dTmp", "D", layer=layer, phase=phase, out_kind="grad",
+        prefer_reduce_scatter=cfg.prefer_reduce_scatter,
+    )
+    _tag_note(s, rec, "W_out")
+    steps += s
+    dxe_used = _gathered_form(s, dxe)
+
+    s, _ = plan_matmul(
+        rec.tmp, dxe_used, "dW_out", "S", layer=layer, phase=phase,
+        **_wt_scatter(cfg, "W_out"), out_kind="grad",
+        prefer_reduce_scatter=cfg.prefer_reduce_scatter,
+    )
+    _tag_note(s, rec, "W_out")
+    steps += s
+
     z_fwd = replace(dtmp, name="Z", kind="activation")
     tmp_fwd = replace(dtmp, name="Tmp", kind="activation")
     dz = replace(dtmp, name="dZ")
@@ -291,12 +313,22 @@ def backward_moe(cfg: StrategyConfig, rec: LayerRecord, d_out: LTensor, layer: i
         caption="through the gelu: multiply by its derivative at the saved pre-activation Z",
         note_tex=FROM_FWD + GeluStep(src=z_fwd, out=tmp_fwd).tex(),
     ))
-    dtok = LTensor("dX", ("E", "S", "D"), {"E": axis}, kind="grad")
-    steps.append(MatMulStep(a=dz, b=w_in.transposed(), out=dtok, contract="F",
-                            layer=layer, phase=phase, note_tex=note_in))
-    dw_in = LTensor("dW_in", ("E", "D", "F"), {"E": axis}, kind="grad")
-    steps.append(MatMulStep(a=rec.mlp_in, b=dz, out=dw_in, contract="S",
-                            layer=layer, phase=phase, note_tex=note_in))
+
+    s, dtok = plan_matmul(
+        dz, w_in.transposed(), "dX", "F", layer=layer, phase=phase,
+        scatter_dim="D", out_kind="grad", prefer_reduce_scatter=cfg.prefer_reduce_scatter,
+    )
+    _tag_note(s, rec, "W_in")
+    steps += s
+    dz_used = _gathered_form(s, dz)
+
+    s, _ = plan_matmul(
+        rec.mlp_in, dz_used, "dW_in", "S", layer=layer, phase=phase,
+        **_wt_scatter(cfg, "W_in"), out_kind="grad",
+        prefer_reduce_scatter=cfg.prefer_reduce_scatter,
+    )
+    _tag_note(s, rec, "W_in")
+    steps += s
 
     dx = LTensor("dX", ("B", "T", "D"), cfg.act_sharding, kind="grad")
     steps.append(AllToAllStep(src=dtok, out=dx, axis=axis, direction="combine",
@@ -325,7 +357,7 @@ def backward_attention(cfg: StrategyConfig, rec: LayerRecord, d_out: LTensor, la
 
     s, _ = plan_matmul(
         rec.attn_a, d_out_used, "dW_o", ("B", "T"), layer=layer, phase=phase,
-        scatter_dim=_wt_scatter_dim(cfg, "W_o"), out_kind="grad",
+        **_wt_scatter(cfg, "W_o"), out_kind="grad",
         prefer_reduce_scatter=cfg.prefer_reduce_scatter,
     )
     _tag_note(s, rec, "W_o")
@@ -334,7 +366,7 @@ def backward_attention(cfg: StrategyConfig, rec: LayerRecord, d_out: LTensor, la
     # attention core backward: dA -> dQ, dK, dV (uses the saved Q, K, V)
     dq = replace(rec.q.grad(), name="dQ")
     ctx = cfg.kv_context_axis
-    cp_active = ctx is not None and rec.q.axis_of("T") == ctx
+    cp_active = ctx is not None and ctx in rec.q.axes_of("T")
     if cp_active:
         # the forward saved only the K/V SHARDS — re-gather them for the core
         # backward, exactly the gather the forward did (cf. FSDP's re-gather)
@@ -381,7 +413,7 @@ def backward_attention(cfg: StrategyConfig, rec: LayerRecord, d_out: LTensor, la
 
     s, _ = plan_matmul(
         rec.attn_in, dqkv_used, "dW_qkv", ("B", "T"), layer=layer, phase=phase,
-        scatter_dim=_wt_scatter_dim(cfg, "W_qkv"), out_kind="grad",
+        **_wt_scatter(cfg, "W_qkv"), out_kind="grad",
         prefer_reduce_scatter=cfg.prefer_reduce_scatter,
     )
     _tag_note(s, rec, "W_qkv")
@@ -394,7 +426,7 @@ def backward_attention(cfg: StrategyConfig, rec: LayerRecord, d_out: LTensor, la
 
 def train_steps(cfg: StrategyConfig) -> list[Step]:
     """Forward (saving activations) + backward, as one step list."""
-    if cfg.pipeline is not None:
+    if cfg.pipeline is not None and not cfg.pipeline.composed:
         return pipeline_train_steps(cfg)
 
     steps, recs = annotate_forward(cfg)
@@ -409,6 +441,12 @@ def train_steps(cfg: StrategyConfig) -> list[Step]:
     )
     for layer in range(cfg.n_layers, 0, -1):
         rec = recs[layer]
+        if layer < cfg.n_layers:
+            fwd_send = stage_send(cfg, recs[layer].out, layer)
+            send = stage_send(cfg, d_out, layer + 1, backward=True,
+                              note_tex=(DUAL_FWD + fwd_send.tex()) if fwd_send else None)
+            if send is not None:
+                steps.append(send)
         if cfg.moe is not None:
             s, dx = backward_moe(cfg, rec, d_out, layer)
         else:

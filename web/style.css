@@ -32,6 +32,7 @@
   --cv-exp0: #8f3f71; --cv-exp1: #427b58; --cv-exp2: #79740e; --cv-exp3: #af3a03;
   --cv-boxFill: #f2e5bc; --cv-boxStroke: #bdae93;
   --cv-surf: #ebdbb2; --cv-surf2: #e5d5a8;
+  --cv-axX: #8f3f71; --cv-axY: #79740e; --cv-axC: #af3a03; --cv-axZ: #076678; --cv-axP: #7c6f64;
 }
 :root[data-theme="dark"] {
   --paper: #282828;
@@ -57,6 +58,7 @@
   --cv-exp0: #d3869b; --cv-exp1: #8ec07c; --cv-exp2: #b8bb26; --cv-exp3: #fe8019;
   --cv-boxFill: #32302f; --cv-boxStroke: #665c54;
   --cv-surf: #3c3836; --cv-surf2: #504945;
+  --cv-axX: #d3869b; --cv-axY: #b8bb26; --cv-axC: #fe8019; --cv-axZ: #83a598; --cv-axP: #a89984;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
@@ -83,6 +85,7 @@
     --cv-exp0: #d3869b; --cv-exp1: #8ec07c; --cv-exp2: #b8bb26; --cv-exp3: #fe8019;
     --cv-boxFill: #32302f; --cv-boxStroke: #665c54;
     --cv-surf: #3c3836; --cv-surf2: #504945;
+    --cv-axX: #d3869b; --cv-axY: #b8bb26; --cv-axC: #fe8019; --cv-axZ: #83a598; --cv-axP: #a89984;
   }
 }
 
@@ -184,12 +187,13 @@ body:not(.tpv-page) .tpv-canvas text {
 .tpv {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 320px;
-  grid-template-rows: auto auto auto;
+  grid-template-rows: auto auto auto auto;
   grid-template-areas:
     "head head"
     "canvas prog"
     "algo prog"
-    "stepper prog";
+    "stepper prog"
+    "axes prog";
   border: 1px solid var(--line);
   border-radius: 14px;
   background: var(--card);
@@ -353,9 +357,9 @@ body:not(.tpv-page) .tpv-canvas text {
 @media (max-width: 980px) {
   .tpv {
     grid-template-columns: 1fr;
-    grid-template-areas: "head" "canvas" "algo" "stepper" "prog";
+    grid-template-areas: "head" "canvas" "algo" "stepper" "axes" "prog";
   }
-  .tpv-canvas-wrap, .tpv-stepper { border-right: none; }
+  .tpv-canvas-wrap, .tpv-stepper, .tpv-axes { border-right: none; }
   .tpv-program { border-top: 1px solid var(--line); min-height: 0; }
   .tpv-program-list { position: static; max-height: 260px; }
 }
@@ -429,3 +433,45 @@ body:not(.tpv-page) .tpv-canvas text {
 }
 .tpv-algo-hop { font-family: var(--mono); flex: none; }
 .tpv-algo-svg { display: block; width: 100%; max-width: 700px; margin: 0 auto; height: auto; max-height: 128px; }
+
+/* ---------------------------------------------- mesh-axis attribution */
+/* Multi-axis figures: every collective is tagged with the mesh axis that
+   caused it — chips in the program, colored segments in the step bar, and a
+   per-axis tally row (hover to isolate an axis's segments, click to jump to
+   its next collective). */
+.tpv-ax {
+  font-family: var(--sans); font-size: 10px; font-weight: 700; letter-spacing: 0.06em;
+  border-radius: 999px; padding: 1px 7px; flex: none; line-height: 1.5;
+  color: var(--cv-bg); background: var(--ax, var(--ink-2));
+}
+.tpv-ax-X { --ax: var(--cv-axX); } .tpv-ax-Y { --ax: var(--cv-axY); }
+.tpv-ax-C { --ax: var(--cv-axC); } .tpv-ax-Z { --ax: var(--cv-axZ); }
+.tpv-ax-stage { --ax: var(--cv-axP); }
+.tpv-seg.ax-X { background: var(--cv-axX); } .tpv-seg.ax-Y { background: var(--cv-axY); }
+.tpv-seg.ax-C { background: var(--cv-axC); } .tpv-seg.ax-Z { background: var(--cv-axZ); }
+.tpv-seg.ax-stage { background: var(--cv-axP); }
+.tpv-seg[class*="ax-"] { opacity: 0.55; }
+.tpv-seg[class*="ax-"].done { opacity: 0.9; }
+.tpv-seg[class*="ax-"].current { opacity: 1; }
+.tpv-stepper[data-focus] .tpv-seg:not(.focus) { opacity: 0.12; }
+.tpv-stepper[data-focus] .tpv-seg.focus { opacity: 1; }
+.tpv-axes {
+  grid-area: axes;
+  display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center;
+  padding: 0 14px 12px;
+  border-right: 1px solid var(--line);
+  font-family: var(--sans); font-size: 11.5px; color: var(--ink-2);
+}
+.tpv-axes:empty { display: none; }
+.tpv-axes-label { letter-spacing: 0.1em; text-transform: uppercase; font-size: 10px; margin-right: 2px; }
+.tpv-axchip {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: none; border: 1px solid var(--line); border-radius: 999px;
+  padding: 2px 9px 2px 6px; cursor: pointer; color: var(--ink);
+  font: 500 11.5px var(--sans);
+}
+.tpv-axchip:hover { background: var(--card-2); }
+.tpv-axchip .sw { width: 10px; height: 10px; border-radius: 3px; margin: 0; background: var(--ax); }
+.tpv-axchip b { font-weight: 700; }
+.tpv-axchip .n { font-family: var(--mono); color: var(--ink-2); }
+.tpv-axchip.zero { opacity: 0.45; }

@@ -38,26 +38,37 @@ def _fmt_bytes(n: float) -> str:
 
 def tensor_tooltip(tensor: dict, atlas) -> dict:
     """Build tooltip payload from a serialized tensor spec dict."""
+    from tpviz.core.mesh import Mesh
+
     dims = tensor["dims"]
     shard = tensor["shard"]
-    mesh = tensor["mesh"]
+    mesh = Mesh(tensor["mesh"])
     device = tensor["device"]
-    glob = [NOMINAL.size(d) for d in dims]
-    local = [
-        NOMINAL.size(d) // (mesh.get(shard[d], 1) if d in shard else 1) for d in dims
-    ]
+    # E follows the expert axis of the mesh (4 experts in the EP single, 2 in
+    # the 5D combo); S = B*T/E is the balanced routed-token count
+    sizes = {d: NOMINAL.size(d) for d in dims}
+    if "E" in sizes:
+        sizes["E"] = mesh.axes.get("Z", NOMINAL.E)
+        sizes["S"] = NOMINAL.B * NOMINAL.T // sizes["E"]
+    glob = [sizes[d] for d in dims]
+    local = [sizes[d] // (mesh.size(shard[d]) if d in shard else 1) for d in dims]
     mem_g = prod(glob) * NOMINAL.bytes_per
     mem_l = prod(local) * NOMINAL.bytes_per
+    sharding_axes = [a for axes in shard.values() for a in axes]
+    others = [a for a in mesh.axes if a != "stage" and a not in sharding_axes]
     if shard:
         parts = []
         for d, ax in shard.items():
-            n = mesh.get(ax, 1)
-            size = NOMINAL.size(d) // n
-            lo = (device % n) * size  # 1D meshes; fine for the singles
-            parts.append(f"{d} sharded {n}-way over {ax} — this device holds {d}∈[{lo}, {lo + size})")
+            n = mesh.size(ax)
+            size = sizes[d] // n
+            lo = mesh.coord(ax, device) * size
+            over = ax if len(ax) == 1 else f"{ax} (both axes at once)"
+            parts.append(f"{d} sharded {n}-way over {over} — this device holds {d}∈[{lo}, {lo + size})")
         shard_desc = "; ".join(parts)
+        if others and len(mesh.axes) > 1:
+            shard_desc += f"; replicated over {', '.join(others)}"
     else:
-        n = prod(mesh.values()) if mesh else 1
+        n = prod(mesh.axes.values()) if mesh.axes else 1
         shard_desc = f"replicated on all {n} devices"
     return {
         "kind": tensor["kind"],
@@ -103,6 +114,11 @@ def step_entry(seg, atlas) -> dict:
         entry["eqh"] = entry["kind"]
     if step.note_tex:
         entry["noteh"] = tex_to_html(step.note_tex)
+    # attribution: which mesh axis (= which parallelism) this collective belongs to
+    if isinstance(step, P2PSendStep):
+        entry["axis"] = "stage"
+    elif isinstance(step, CollectiveStep):
+        entry["axis"] = step.axis
     entry["comm"] = isinstance(step, (CollectiveStep, P2PSendStep))
     entry["mm"] = isinstance(step, MatMulStep)
     return entry

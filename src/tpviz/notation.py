@@ -61,8 +61,12 @@ def tensor_tex(t: LTensor) -> str:
     """Full sharded-array notation, e.g. \\mathrm{In}[B_{X}, T, D]\\{U_{Y}\\}."""
     dims = ",\\, ".join(dim_tex(d, t.sharding.get(d)) for d in t.dims)
     tex = rf"{name_tex(t.name)}[{dims}]"
-    for axis in sorted(t.partial):
-        tex += rf"\{{U_{{{axis}}}\}}"
+    if t.partial:
+        # one badge, letters in canonical order: {U_X}, or {U_{XZC}} when the
+        # sum is unreduced over several axes at once
+        from tpviz.core.mesh import canon_axes
+
+        tex += rf"\{{U_{{{canon_axes(''.join(t.partial))}}}\}}"
     return tex
 
 

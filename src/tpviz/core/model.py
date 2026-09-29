@@ -14,7 +14,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 from tpviz.core.engine import plan_matmul
-from tpviz.core.mesh import StrategyConfig
+from tpviz.core.mesh import StrategyConfig, canon_axes
 from tpviz.core.steps import (
     AllGatherStep,
     AllToAllStep,
@@ -56,13 +56,39 @@ def make_input(cfg: StrategyConfig) -> LTensor:
     return LTensor("In", ("B", "T", "D"), cfg.act_sharding, kind="activation")
 
 
+def stage_of(cfg: StrategyConfig, layer: int) -> int | None:
+    """Pipeline stage owning `layer` (composed pipelines: one layer per stage)."""
+    if cfg.pipeline is None:
+        return None
+    return (layer - 1) * cfg.pipeline.n_stages // cfg.n_layers
+
+
+def stage_send(cfg: StrategyConfig, x: LTensor, layer_from: int, *, backward: bool = False,
+               note_tex: str | None = None) -> P2PSendStep | None:
+    """The point-to-point hop between the stages of consecutive layers, or None
+    when both layers live on the same stage."""
+    a, b = stage_of(cfg, layer_from), stage_of(cfg, layer_from + (-1 if backward else 1))
+    if a is None or a == b:
+        return None
+    return P2PSendStep(
+        tensor=x, src_stage=a, dst_stage=b, tick=min(a, b), layer=layer_from,
+        phase="pipeline", backward=backward, note_tex=note_tex,
+        caption=(f"Stage {a} hands the {'gradient' if backward else 'activations'} to stage {b}: "
+                 "a single point-to-point send"),
+    )
+
+
 def forward_steps(cfg: StrategyConfig) -> list[Step]:
-    if cfg.pipeline is not None:
+    if cfg.pipeline is not None and not cfg.pipeline.composed:
         return pipeline_steps(cfg)
 
     steps: list[Step] = []
     x = make_input(cfg)
     for layer in range(1, cfg.n_layers + 1):
+        if layer > 1:
+            send = stage_send(cfg, x, layer - 1)
+            if send is not None:
+                steps.append(send)
         steps += attention_steps(cfg, x, layer)
         x = steps[-1].out  # type: ignore[union-attr]
         last = layer == cfg.n_layers
@@ -139,8 +165,29 @@ def mlp_steps(cfg: StrategyConfig, x: LTensor, layer: int, out_name: str = "Out"
     return steps
 
 
+def routed_tokens(cfg: StrategyConfig, x: LTensor, name: str = "X", *, kind: str = "activation"
+                  ) -> LTensor:
+    """The dispatched token tensor [E, S, D]: E lives on the expert axis; the
+    routed-token dim S stays sharded over every OTHER axis that sharded tokens
+    (batch or sequence) — the AllToAll only re-sorts tokens along the expert
+    axis; D keeps its (tensor-parallel) sharding."""
+    assert cfg.moe is not None
+    axis = cfg.moe.axis
+    token_axes = canon_axes((x.axes_of("B") + x.axes_of("T")).replace(axis, ""))
+    sharding = {"E": axis}
+    if token_axes:
+        sharding["S"] = token_axes
+    if x.axes_of("D"):
+        sharding["D"] = x.axes_of("D")
+    return LTensor(name, ("E", "S", "D"), sharding, kind=kind)
+
+
 def moe_steps(cfg: StrategyConfig, x: LTensor, layer: int, out_name: str = "Out") -> list[Step]:
-    """Routed MoE MLP: route -> AllToAll dispatch -> expert MLP -> AllToAll combine."""
+    """Routed MoE MLP: route -> AllToAll dispatch -> expert MLP -> AllToAll combine.
+
+    The expert matmuls go through the engine like every other matmul: under a
+    multi-axis mesh they pick up FSDP's jit weight gathers (over the data axis)
+    and TP's gather-in / ReduceScatter-out (over the tensor axis) on their own."""
     assert cfg.moe is not None
     axis = cfg.moe.axis
     steps: list[Step] = []
@@ -148,7 +195,7 @@ def moe_steps(cfg: StrategyConfig, x: LTensor, layer: int, out_name: str = "Out"
     steps.append(RouteStep(tokens=x, n_experts=cfg.moe.n_experts, layer=layer, phase="moe"))
 
     # Dispatch: each device ends up holding the S tokens routed to ITS expert.
-    routed = LTensor("X", ("E", "S", "D"), {"E": axis}, kind="activation")
+    routed = routed_tokens(cfg, x)
     steps.append(
         AllToAllStep(src=x, out=routed, axis=axis, direction="dispatch", layer=layer, phase="moe")
     )
@@ -156,16 +203,18 @@ def moe_steps(cfg: StrategyConfig, x: LTensor, layer: int, out_name: str = "Out"
     w_in = make_weight(cfg, "W_in")
     w_out = make_weight(cfg, "W_out")
 
-    # Expert compute is local: each device multiplies its token group by its
-    # expert's weights (batched over the co-sharded E dim, so no comms).
-    z = LTensor("Z", ("E", "S", "F"), {"E": axis}, kind="activation")
-    steps.append(MatMulStep(a=routed, b=w_in, out=z, contract="D", layer=layer, phase="moe"))
-    tmp = LTensor("Tmp", ("E", "S", "F"), {"E": axis}, kind="activation")
-    steps.append(GeluStep(src=z, out=tmp, layer=layer, phase="moe"))
-    expert_out = LTensor("X", ("E", "S", "D"), {"E": axis}, kind="activation")
-    steps.append(
-        MatMulStep(a=tmp, b=w_out, out=expert_out, contract="F", layer=layer, phase="moe")
+    up_plan, z = plan_matmul(
+        routed, w_in, "Z", "D", layer=layer, phase="moe",
+        prefer_reduce_scatter=cfg.prefer_reduce_scatter,
     )
+    steps += up_plan
+    tmp = replace(z, name="Tmp")
+    steps.append(GeluStep(src=z, out=tmp, layer=layer, phase="moe"))
+    down_plan, expert_out = plan_matmul(
+        tmp, w_out, "X", "F", layer=layer, phase="moe",
+        scatter_dim="D", prefer_reduce_scatter=cfg.prefer_reduce_scatter,
+    )
+    steps += down_plan
 
     # Combine: tokens fly home to their original devices/positions.
     out = LTensor(out_name, ("B", "T", "D"), cfg.act_sharding, kind="activation")

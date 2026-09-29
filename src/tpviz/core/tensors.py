@@ -6,6 +6,7 @@ from dataclasses import dataclass, field, replace
 from typing import Literal, Mapping
 
 from tpviz import notation
+from tpviz.core.mesh import canon_axes
 
 Kind = Literal["weight", "activation", "kv", "grad"]
 
@@ -14,33 +15,49 @@ Kind = Literal["weight", "activation", "kv", "grad"]
 class LTensor:
     name: str
     dims: tuple[str, ...]
-    sharding: Mapping[str, str] = field(default_factory=dict)  # dim -> mesh axis
-    partial: frozenset[str] = frozenset()  # unreduced mesh axes, renders {U_X}
+    sharding: Mapping[str, str] = field(default_factory=dict)  # dim -> mesh axis letters
+    partial: frozenset[str] = frozenset()  # unreduced mesh axes (letters), renders {U_X}
     kind: Kind = "activation"
 
     def __post_init__(self) -> None:
         # plain dict (not MappingProxyType): mobjects holding an LTensor must
         # survive Manim's deepcopy, and mappingproxy cannot be pickled
-        object.__setattr__(self, "sharding", dict(self.sharding))
+        object.__setattr__(
+            self, "sharding", {d: canon_axes(a) for d, a in self.sharding.items() if a}
+        )
         for dim in self.sharding:
             if dim not in self.dims:
                 raise ValueError(f"{self.name}: sharded dim {dim!r} not in dims {self.dims}")
-        axes = list(self.sharding.values())
-        if len(axes) != len(set(axes)):
+        letters = [a for axes in self.sharding.values() for a in axes]
+        if len(letters) != len(set(letters)):
             raise ValueError(f"{self.name}: a mesh axis shards more than one dim: {dict(self.sharding)}")
 
     def axis_of(self, dim: str) -> str | None:
+        """The (possibly compound) subscript of `dim`, or None if replicated."""
         return self.sharding.get(dim)
 
-    def gathered(self, dim: str) -> LTensor:
-        """Result of AllGather along the axis sharding `dim` (subscript removed)."""
-        new = {d: a for d, a in self.sharding.items() if d != dim}
+    def axes_of(self, dim: str) -> str:
+        """The letters sharding `dim` ("" if replicated)."""
+        return self.sharding.get(dim, "")
+
+    def gathered(self, dim: str, axis: str | None = None) -> LTensor:
+        """Result of AllGather along `axis` (one letter) — or along every axis
+        sharding `dim` when `axis` is None. The subscript loses that letter."""
+        new = dict(self.sharding)
+        if axis is None:
+            new.pop(dim, None)
+        else:
+            left = new.get(dim, "").replace(axis, "")
+            if left:
+                new[dim] = left
+            else:
+                new.pop(dim, None)
         return replace(self, sharding=new)
 
     def scattered(self, dim: str, axis: str) -> LTensor:
-        """Result of ReduceScatter: partial axis resolved, `dim` now sharded on it."""
+        """Result of ReduceScatter: partial axis resolved, `dim` now (also) sharded on it."""
         new = dict(self.sharding)
-        new[dim] = axis
+        new[dim] = canon_axes(new.get(dim, "") + axis)
         return replace(self, sharding=new, partial=self.partial - {axis})
 
     def reduced(self, axis: str) -> LTensor:

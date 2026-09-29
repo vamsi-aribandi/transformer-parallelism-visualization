@@ -56,9 +56,22 @@ def iter_units(m: Mobject) -> Iterator[Mobject]:
         yield m  # unknown leaf: serialize() will register the gap
 
 
+_FAMILY: dict[int, list] = {}
+
+
+def _family(m: Mobject) -> list:
+    """`family_members_with_points()`, cached per unit: a unit's structure never
+    changes after creation, and walking a deck's ~100 dashes five times per
+    play for every live unit dominated recording time."""
+    fam = _FAMILY.get(id(m))
+    if fam is None:
+        fam = _FAMILY[id(m)] = m.family_members_with_points()
+    return fam
+
+
 def _opacity(m: Mobject) -> float:
     best = 0.0
-    for sm in m.family_members_with_points():
+    for sm in _family(m):
         best = max(best, float(sm.fill_opacity or 0), float(sm.stroke_opacity or 0))
     return round(min(best, 1.0), 3)
 

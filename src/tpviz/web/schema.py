@@ -48,6 +48,8 @@ for _i, _hex in enumerate(style.DEVICE_HUES[:4]):
     HEX2TOK[_hex.upper()] = f"dev{_i}"
 for _i, _hex in enumerate(style.EXPERT_HUES):
     HEX2TOK[_hex.upper()] = f"exp{_i}"
+for _ax, _hex in style.AXIS_HUES.items():
+    HEX2TOK[_hex.upper()] = "axP" if _ax == "stage" else f"ax{_ax}"
 
 
 def _tok(color):

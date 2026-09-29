@@ -17,6 +17,21 @@ MLP becomes a routed MoE for expert parallelism):
 | `pp` | Pipeline parallelism — stages own layers, 4 microbatches | P2P activation sends (Gantt + bubble shown) |
 | `ep` | Expert parallelism (MoE) — `W[E_Z, D, F]` | AllToAll dispatch + combine |
 
+## The 5D combination
+
+`scenes/five_d.py` runs all five at once on 32 devices —
+`Mesh({'X': 2, 'Y': 2, 'C': 2, 'Z': 2, 'stage': 2})`: FSDP over `X`, tensor
+parallelism over `Y`, context parallelism over `C`, two experts on `Z`, two
+pipeline stages. Activations are `In[B_{XZ}, T_C, D_Y]`, weights
+`W_qkv[D_X, H_Y]`, experts `W_in[E_Z, D_X, F_Y]`. The step list is derived by
+the same engine (no new choreography rules): 25 forward and 49 backward
+collectives, each attributed to exactly one mesh axis. The canvas is one 4×4
+device grid per stage (rows = X outer / C inner, columns = Z outer / Y inner),
+so every axis is a fixed geometric relation between boxes; flights carry an
+axis-colored halo and a badge names the parallelism responsible.
+`tests/test_five_d.py` pins the per-block sequences. Render with
+`make lq-5d` / `make hq-5d`.
+
 ## Forward + backward (training-step) videos
 
 Each strategy also has a `*_train` scene showing the full training step:
@@ -61,4 +76,8 @@ make gallery              # static component sheet -> media/images/gallery/
 make lq S=dp C=DPScene    # fast 480p iteration render
 make frames S=dp C=DPScene   # dump 1-frame-per-3s PNGs to qa/dp for review
 make hq-all               # final 1080p60 renders -> renders/*.mp4
+make web                  # record all figures -> web/dist (data.json, data.js, index.html)
+make web-one T=5d_train   # re-record one timeline, merged into the existing data.json
+make web-qa S=5d M=train T=60   # headless-Chrome still of one figure -> qa/web/
+make site                 # sync the figure assets into ../vamsi-aribandi.github.io
 ```

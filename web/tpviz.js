@@ -23,6 +23,7 @@
     "text", "muted", "accent", "comm", "good", "act", "actS", "wt", "wtS",
     "kv", "kvS", "grad", "gradS", "boxFill", "boxStroke", "surf", "surf2",
     "dev0", "dev1", "dev2", "dev3", "exp0", "exp1", "exp2", "exp3",
+    "axX", "axY", "axC", "axZ", "axP",
   ]);
   const col = (v) => (TOKENS.has(v) ? `var(--cv-${v})` : v);
 
@@ -80,20 +81,29 @@
   const DIM_LEN = { D: 150, F: 230, H: 120, T: 100, S: 90, B: 100, E: 100 };
   const N_SLABS = 4, SLAB_DX = 9, SLAB_DY = 7;
 
-  function axisCoord(mesh, axis, device) {
+  // a sharding subscript is one mesh axis ("X") or a compound of axis letters
+  // ("XZ": the dim is split over both at once, row-major over the letters)
+  function meshSize(mesh, axes) {
+    if (axes in mesh) return mesh[axes];
+    return [...axes].reduce((p, a) => p * (mesh[a] || 1), 1);
+  }
+  function axisCoord(mesh, axes, device) {
+    const coords = {};
     let rem = device;
     for (const name of Object.keys(mesh).reverse()) {
-      const size = mesh[name], coord = rem % size;
-      if (name === axis) return coord;
-      rem = Math.floor(rem / size);
+      coords[name] = rem % mesh[name];
+      rem = Math.floor(rem / mesh[name]);
     }
-    return 0;
+    if (axes in mesh) return coords[axes] || 0;
+    let idx = 0;
+    for (const a of axes) idx = idx * (mesh[a] || 1) + (coords[a] || 0);
+    return idx;
   }
 
   function shardFrac(t, dim) {
     const ax = t.shard[dim];
     if (!ax || !t.sharded) return [1, 0];
-    const n = t.mesh[ax] || 1;
+    const n = meshSize(t.mesh, ax);
     return [1 / n, axisCoord(t.mesh, ax, t.device) / n];
   }
 
@@ -284,6 +294,10 @@
       this.tl = DOC.timelines[`${strategy}_train`];
       if (!this.tl) { this.textContent = "figure data missing"; return; }
       this.meta = (DOC.meta.strategies || {})[strategy] || {};
+      // multi-axis meshes attribute every collective to its axis (chips,
+      // colored segments, per-axis tally); the singles keep their plain look
+      this.axes = this.meta.axes || {};
+      this.multi = Object.keys(this.axes).filter((a) => a !== "stage").length > 1;
       this.mode = "fwd";
       this.playing = false;
       this.speed = 1; // recorded pacing is "2x"; default plays at half that
@@ -294,7 +308,17 @@
       this.precompute();
       this.setMode("fwd", true);
 
+      // deep links (also the headless-QA hooks): #fig=<strategy> isolates one
+      // figure on the page; #mode/#step drive it (or every figure without fig)
       const p = new URLSearchParams(location.hash.slice(1));
+      const fig = p.get("fig");
+      if (fig && fig !== strategy) return;
+      if (fig) {
+        const keep = this.closest(".tpv-outer") || this;
+        for (const el of document.querySelectorAll("article > *, main > *")) {
+          if (el !== keep && !el.contains(keep)) el.hidden = true;
+        }
+      }
       if (p.get("mode") === "train") this.setMode("train");
       if (p.get("step")) {
         const k = Math.min(parseInt(p.get("step"), 10), this.visible.length - 1);
@@ -389,6 +413,9 @@
       this.stepper = document.createElement("div");
       this.stepper.className = "tpv-stepper";
       this.appendChild(this.stepper);
+      this.axesRow = document.createElement("div");
+      this.axesRow.className = "tpv-axes";
+      this.appendChild(this.axesRow);
 
       const prog = document.createElement("div");
       prog.className = "tpv-program";
@@ -477,7 +504,45 @@
         .map(({ i }) => i);
       this.buildStepper();
       this.buildProgram();
+      this.buildAxes();
       this.show(-1);
+    }
+
+    /* Per-axis tally of the visible collectives: "X · FSDP ×12". Hover a chip
+       to isolate that axis's segments in the step bar; click to jump to its
+       next collective after the current step. */
+    buildAxes() {
+      this.axesRow.textContent = "";
+      if (!this.multi) return;
+      const counts = {};
+      for (const real of this.visible) {
+        const ax = this.tl.steps[real].axis;
+        if (ax) counts[ax] = (counts[ax] || 0) + 1;
+      }
+      const label = document.createElement("span");
+      label.className = "tpv-axes-label";
+      label.textContent = "collectives by axis";
+      this.axesRow.appendChild(label);
+      for (const ax of Object.keys(this.axes)) {
+        const n = counts[ax] || 0;
+        const chip = document.createElement("button");
+        chip.className = `tpv-axchip tpv-ax-${ax}` + (n ? "" : " zero");
+        chip.title = `next ${this.axes[ax].role || ax} collective`;
+        chip.innerHTML = `<span class="sw"></span><b>${this.axes[ax].role || ax}</b> · ${ax} <span class="n">×${n}</span>`;
+        chip.addEventListener("mouseenter", () => {
+          this.stepper.dataset.focus = ax;
+          this.segs.forEach((seg, k) => seg.classList.toggle("focus", this.tl.steps[this.visible[k]].axis === ax));
+        });
+        chip.addEventListener("mouseleave", () => { delete this.stepper.dataset.focus; });
+        chip.addEventListener("click", () => {
+          this.stop();
+          for (let k = 1; k <= this.visible.length; k++) {
+            const vi = (this.cur + k) % this.visible.length;
+            if (this.tl.steps[this.visible[vi]].axis === ax) { this.show(vi); break; }
+          }
+        });
+        this.axesRow.appendChild(chip);
+      }
     }
 
     buildStepper() {
@@ -485,8 +550,10 @@
       this.segs = this.visible.map((real, vi) => {
         const st = this.tl.steps[real];
         const seg = document.createElement("button");
-        seg.className = "tpv-seg" + (st.bwd ? " bwd" : "") + (st.save ? " save" : "");
-        seg.title = `${st.bwd ? "◀ " : ""}L${st.layer} · ${PHASE_TITLE[st.phase] || st.phase} · ${st.kind}`;
+        seg.className = "tpv-seg" + (st.bwd ? " bwd" : "") + (st.save ? " save" : "")
+          + (this.multi && st.axis ? ` ax-${st.axis}` : "");
+        const role = this.multi && st.axis ? ` · ${this.axes[st.axis]?.role || st.axis}` : "";
+        seg.title = `${st.bwd ? "◀ " : ""}L${st.layer} · ${PHASE_TITLE[st.phase] || st.phase} · ${st.kind}${role}`;
         seg.addEventListener("click", () => { this.stop(); this.show(vi); });
         this.stepper.appendChild(seg);
         return seg;
@@ -511,9 +578,10 @@
           sectionKey = key;
           const head = document.createElement("div");
           head.className = `tpv-prog-sec ${st.bwd ? "bwd" : "fwd"}`;
+          const stage = this.multi && this.axes.stage ? `stage ${st.layer - 1} · ` : "";
           head.textContent = st.phase === "pipeline"
             ? `${st.bwd ? "◀ backward · " : ""}pipeline`
-            : `${st.bwd ? "◀ backward · " : ""}layer ${st.layer} · ${(PHASE_TITLE[st.phase] || st.phase).toLowerCase()}`;
+            : `${st.bwd ? "◀ backward · " : ""}${stage}layer ${st.layer} · ${(PHASE_TITLE[st.phase] || st.phase).toLowerCase()}`;
           this.programList.appendChild(head);
         }
         const e = document.createElement("div");
@@ -521,6 +589,14 @@
         const line = document.createElement("div");
         line.className = "tpv-prog-line";
         if (st.save) line.innerHTML = `<span class="tpv-save">save</span>`;
+        if (this.multi && st.axis) {
+          const chip = document.createElement("span");
+          chip.className = `tpv-ax tpv-ax-${st.axis}`;
+          chip.textContent = st.axis === "stage"
+            ? (this.axes.stage?.role || "PP")
+            : `${this.axes[st.axis]?.role || ""} · ${st.axis}`;
+          line.appendChild(chip);
+        }
         const eq = document.createElement("span");
         eq.className = "meq";
         eq.innerHTML = st.eqh;
@@ -607,7 +683,7 @@
       this.posEl.textContent = `${vi + 1} / ${this.visible.length}`;
       this.playBtn.textContent = this.playing ? "❚❚" : "▶";
       const st = vi >= 0 ? this.tl.steps[this.visible[vi]] : null;
-      this.updateAlgo(st && RING_TITLES[st.kind] ? st.kind : null);
+      this.updateAlgo(st && RING_TITLES[st.kind] ? st.kind : null, st ? st.axis : null);
     }
 
     /* ------------------------------------------------------- play mode */
@@ -774,23 +850,31 @@
     P2PSend: "how it runs: a single point-to-point send between neighboring stages",
   };
 
-  TPVizFigure.prototype.updateAlgo = function (kind) {
-    if (kind === this._algoKind) return;
-    this._algoKind = kind;
+  TPVizFigure.prototype.updateAlgo = function (kind, axis) {
+    const key = kind ? `${kind}|${axis || ""}` : null;
+    if (key === this._algoKind) return;
+    this._algoKind = key;
     this._algoToken++;
     this.band.classList.toggle("has-algo", !!kind);
     if (!kind) return;
-    this.algo.querySelector(".tpv-algo-title").textContent = RING_TITLES[kind];
-    this.runAlgo(kind, ++this._algoToken);
+    // multi-axis: the collective runs among the devices of ONE mesh axis —
+    // say which, and draw exactly that many nodes
+    const ax = this.multi && axis ? axis : null;
+    const n = ax ? (this.axes[ax]?.n || 2) : 4;
+    const who = ax && ax !== "stage"
+      ? `over axis ${ax} (${this.axes[ax]?.role || ax}), ${n} devices — `
+      : "";
+    this.algo.querySelector(".tpv-algo-title").textContent = who + RING_TITLES[kind];
+    this.runAlgo(kind, ++this._algoToken, n, ax);
   };
 
-  TPVizFigure.prototype.runAlgo = async function (kind, token) {
+  TPVizFigure.prototype.runAlgo = async function (kind, token, N = 4, axis = null) {
     const svg = this.algoSvg;
     const hopEl = this.algo.querySelector(".tpv-algo-hop");
-    const N = Math.min(this.tl.objects.length ? 4 : 4, 4);
-    const cx = (i) => 170 + i * 220;
+    const cx = (i) => 500 + (i - (N - 1) / 2) * 220;
     const CY = 95, NW = 150, NH = 120;
     const devVar = (i) => `var(--cv-dev${i})`;
+    const nodeName = (i) => (axis && axis !== "stage" ? `${axis} = ${i}` : (axis === "stage" ? `stage ${i}` : `Dev ${i}`));
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
     while (this._algoToken === token && this.band.classList.contains("has-algo")) {
@@ -802,7 +886,7 @@
           stroke: "var(--cv-muted)", "stroke-width": 1.4, "stroke-opacity": 0.6,
         }, svg);
       }
-      svgEl("path", {
+      if (N > 2) svgEl("path", {
         d: `M ${cx(0)} ${CY - NH / 2} C ${cx(0)} 8, ${cx(N - 1)} 8, ${cx(N - 1)} ${CY - NH / 2}`,
         fill: "none", stroke: "var(--cv-muted)", "stroke-width": 1.4,
         "stroke-opacity": 0.6, "stroke-dasharray": "5 5",
@@ -819,7 +903,7 @@
           x: cx(i), y: CY - NH / 2 + 14, "text-anchor": "middle",
           "font-size": 12, "font-weight": 600, fill: devVar(i),
         }, svg);
-        t.textContent = `Dev ${i}`;
+        t.textContent = nodeName(i);
       }
       const chunk = (hue, x, y, o = 1, half = 0) =>
         svgEl("rect", {

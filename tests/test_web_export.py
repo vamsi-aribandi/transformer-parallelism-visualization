@@ -70,3 +70,31 @@ def test_every_tensor_has_tooltip(doc):
 def test_no_strip_objects(doc):
     tl = doc["timelines"]["tp_train"]
     assert all(o["z"] < 10 for o in tl["objects"])
+
+
+def test_merge_documents_rekeys_glyphs_and_tooltips():
+    """Re-recording one timeline merges into a previous full export: glyph ids
+    are positional and tooltips index-based, so both must be remapped."""
+    from tpviz.web.export import merge_documents
+
+    base = {
+        "glyphs": {"G0": "M0", "G1": "M1"}, "eq": {"e1": {"w": 1, "h": 1, "u": [["G1", 0, 0]], "r": []}},
+        "tooltips": [{"kind": "act", "dims": ["B"]}],
+        "timelines": {"tp_train": {"objects": [{"c": "deck", "tip": 0}]}},
+        "meta": {"strategies": {"tp": {}}, "modes": {"tp_train": "train"}}, "dims": {},
+    }
+    new = {
+        "glyphs": {"G0": "M1", "G1": "M9"},  # G0 here is base's G1; G1 is new
+        "eq": {"e2": {"w": 1, "h": 1, "u": [["G0", 0, 0], ["G1", 1, 1]], "r": []}},
+        "tooltips": [{"kind": "wt", "dims": ["D"]}, {"kind": "act", "dims": ["B"]}],
+        "timelines": {"5d_train": {"objects": [{"c": "wrect", "tip": 0}, {"c": "deck", "tip": 1}]}},
+        "meta": {"strategies": {"5d": {}}, "modes": {"5d_train": "train"}}, "dims": {"B": 8},
+    }
+    out = merge_documents(base, new)
+    assert set(out["timelines"]) == {"tp_train", "5d_train"}
+    assert out["glyphs"] == {"G0": "M0", "G1": "M1", "G2": "M9"}
+    assert out["eq"]["e2"]["u"] == [["G1", 0, 0], ["G2", 1, 1]]
+    assert out["tooltips"] == [{"kind": "act", "dims": ["B"]}, {"kind": "wt", "dims": ["D"]}]
+    objs = out["timelines"]["5d_train"]["objects"]
+    assert [o["tip"] for o in objs] == [1, 0]  # new tooltip appended, shared one reused
+    assert out["meta"]["modes"] == {"tp_train": "train", "5d_train": "train"}

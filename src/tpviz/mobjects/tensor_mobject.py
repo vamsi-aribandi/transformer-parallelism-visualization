@@ -36,15 +36,10 @@ TOP_LEFT = np.array([-1.0, 1.0, 0.0])
 
 
 def axis_coord(mesh: Mesh, axis: str, device: int) -> int:
-    """Device's coordinate along `axis`, unraveling the flat index row-major
-    over the mesh axes (1D meshes: coordinate == device index)."""
-    rem = device
-    for name, size in reversed(list(mesh.axes.items())):
-        coord = rem % size
-        if name == axis:
-            return coord
-        rem //= size
-    raise KeyError(axis)
+    """Device's coordinate along `axis` (one mesh axis, or a compound subscript
+    like "XZ"), unraveling the flat device index row-major over the mesh axes
+    (1D meshes: coordinate == device index)."""
+    return mesh.coord(axis, device)
 
 
 def _shard_fraction(t: LTensor, mesh: Mesh, dim: str, device: int) -> tuple[float, float]:
@@ -56,10 +51,15 @@ def _shard_fraction(t: LTensor, mesh: Mesh, dim: str, device: int) -> tuple[floa
     return 1.0 / n, axis_coord(mesh, axis, device) / n
 
 
-def _ghost(width: float, height: float, *, num_dashes: int = 36) -> DashedVMobject:
+def _ghost(width: float, height: float, *, num_dashes: int | None = None) -> DashedVMobject:
+    """Dashed outline of a tensor's full logical extent. The dash count follows
+    the perimeter (constant dash pitch in scene units), which also keeps small
+    decks cheap to deep-copy — Manim copies every dash on every animation."""
     rect = Rectangle(width=width, height=height, stroke_width=1.4)
     rect.set_stroke(style.MUTED_TEXT, opacity=0.45)
     rect.set_fill(opacity=0.0)
+    if num_dashes is None:
+        num_dashes = max(8, round(2 * (width + height) / 0.14))
     return DashedVMobject(rect, num_dashes=num_dashes)
 
 
@@ -172,7 +172,7 @@ class ActivationDeck(TensorVis):
             offset = np.array([SLAB_DX, SLAB_DY, 0.0]) * i * scale
             slab = VGroup()
             if i not in own:
-                ghost_slab = _ghost(full_w, full_h, num_dashes=24)
+                ghost_slab = _ghost(full_w, full_h)
                 slab.add(ghost_slab)
                 slab.shift(offset)
                 slabs.add(slab)

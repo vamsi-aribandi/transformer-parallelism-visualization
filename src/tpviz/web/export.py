@@ -27,6 +27,7 @@ DIST = WEB / "dist"
 STRATEGY_LABEL = {
     "dp": "Data Parallelism", "fsdp": "FSDP (ZeRO-3)", "tp": "Tensor Parallelism",
     "cp": "Context Parallelism", "pp": "Pipeline Parallelism", "ep": "Expert Parallelism",
+    "5d": "5D Parallelism",
 }
 
 
@@ -56,6 +57,9 @@ def scene_registry() -> dict[str, tuple[type, object, bool]]:
         cfg = getattr(configs, short.upper())
         reg[f"{short}_fwd"] = (fwd_cls, cfg, False)
         reg[f"{short}_train"] = (train_cls, cfg, True)
+    from tpviz.scenes.five_d import FiveDScene
+
+    reg["5d_train"] = (FiveDScene, configs.FIVE_D, True)
     return reg
 
 
@@ -80,9 +84,49 @@ def build_document(only: list[str] | None = None) -> dict:
             "name": cfg.name,
             "tagline": cfg.tagline,
             "meshh": tex_to_html(cfg.mesh.tex()),
+            # mesh axes with the parallelism each implements and its size —
+            # the figure's attribution chips and the wire-level inset use them
+            "axes": {
+                ax: {"role": cfg.axis_roles.get(ax, ""), "n": n}
+                for ax, n in cfg.mesh.axes.items()
+            },
         }
         meta["modes"][name] = "train" if is_train else "fwd"
     return builder.build(meta)
+
+
+def merge_documents(base: dict, new: dict) -> dict:
+    """Replace `new`'s timelines inside `base` (a previous full export),
+    re-keying the shared glyph atlas (ids are positional) and tooltip indices."""
+    out = json.loads(json.dumps(base))
+    by_d = {d: gid for gid, d in out["glyphs"].items()}
+    gmap = {}
+    for gid, d in new["glyphs"].items():
+        if d not in by_d:
+            by_d[d] = f"G{len(out['glyphs'])}"
+            out["glyphs"][by_d[d]] = d
+        gmap[gid] = by_d[d]
+    for key, eq in new["eq"].items():
+        if key not in out["eq"]:
+            out["eq"][key] = {**eq, "u": [[gmap[g], x, y] for g, x, y in eq["u"]]}
+    tip_index = {json.dumps(t, sort_keys=True): i for i, t in enumerate(out["tooltips"])}
+    tmap = {}
+    for i, t in enumerate(new["tooltips"]):
+        k = json.dumps(t, sort_keys=True)
+        if k not in tip_index:
+            tip_index[k] = len(out["tooltips"])
+            out["tooltips"].append(t)
+        tmap[i] = tip_index[k]
+    for name, tl in new["timelines"].items():
+        tl = json.loads(json.dumps(tl))
+        for o in tl["objects"]:
+            if "tip" in o:
+                o["tip"] = tmap[o["tip"]]
+        out["timelines"][name] = tl
+    for k in ("strategies", "modes"):
+        out["meta"].setdefault(k, {}).update(new["meta"].get(k, {}))
+    out["dims"] = new["dims"]
+    return out
 
 
 def write_embed_data(doc: dict) -> None:
@@ -108,7 +152,8 @@ def build_page(doc: dict) -> str | None:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--only", help="comma-separated timeline names, e.g. tp_fwd,tp_train")
+    ap.add_argument("--only", help="comma-separated timeline names, e.g. tp_fwd,tp_train "
+                                   "(merged into the existing dist/data.json)")
     ap.add_argument("--json-only", action="store_true")
     ap.add_argument("--page-only", action="store_true",
                     help="skip recording: rebuild index.html from the existing dist/data.json")
@@ -124,6 +169,9 @@ def main():
         return
 
     doc = build_document(only)
+    if only and (DIST / "data.json").exists():
+        # keep the other timelines from the previous full export
+        doc = merge_documents(json.loads((DIST / "data.json").read_text()), doc)
     errs = validate(doc)
     if errs:
         raise SystemExit("validation failed:\n" + "\n".join(errs[:20]))

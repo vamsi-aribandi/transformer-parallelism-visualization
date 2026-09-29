@@ -109,12 +109,27 @@ def test_notation_matches_the_book():
     )
 
 
-def test_engine_rejects_contract_sharded_on_two_axes():
-    import pytest
-
+def test_engine_gathers_both_when_contract_dim_is_sharded_on_two_axes():
+    """FSDP x TP: In[B, D_Y] . W[D_X, F] — the book gathers BOTH operands, each
+    along its own axis (the weight first: FSDP's jit gather)."""
     from tpviz.core.engine import plan_matmul
 
-    a = LTensor("A", ("B", "D"), {"D": "X"})
-    b = LTensor("W", ("D", "F"), {"D": "Y"}, kind="weight")
-    with pytest.raises(ValueError):
-        plan_matmul(a, b, "O", "D", layer=1, phase="mlp")
+    a = LTensor("A", ("B", "D"), {"D": "Y"})
+    b = LTensor("W", ("D", "F"), {"D": "X"}, kind="weight")
+    steps, out = plan_matmul(a, b, "O", "D", layer=1, phase="mlp")
+    kinds = [(type(s).__name__, getattr(s, "axis", None)) for s in steps]
+    assert kinds == [("AllGatherStep", "X"), ("AllGatherStep", "Y"), ("MatMulStep", None)]
+    assert steps[0].src.name == "W" and steps[1].src.name == "A"
+    assert out.sharding == {} and not out.partial
+
+
+def test_engine_batched_dim_cosharded_on_both_operands_is_local():
+    """Routed tokens X[E_Z, S, D] . W_in[E_Z, D, F]: E is a batched dim living
+    on the same axis on both sides — no gather, E appears once in the output."""
+    from tpviz.core.engine import plan_matmul
+
+    a = LTensor("X", ("E", "S", "D"), {"E": "Z"})
+    b = LTensor("W_in", ("E", "D", "F"), {"E": "Z"}, kind="weight")
+    steps, out = plan_matmul(a, b, "Z", "D", layer=1, phase="moe")
+    assert [type(s).__name__ for s in steps] == ["MatMulStep"]
+    assert out.dims == ("E", "S", "F") and out.sharding == {"E": "Z"}

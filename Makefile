@@ -42,7 +42,12 @@ lq-train-all:
 
 # ---- interactive web player ----
 web:
-	uv run python -m tpviz.web.export --only dp_train,fsdp_train,tp_train,cp_train,ep_train,pp_train
+	uv run python -m tpviz.web.export --only dp_train,fsdp_train,tp_train,cp_train,ep_train,pp_train,5d_train
+
+# re-record ONE timeline and merge it into the existing dist/data.json
+# usage: make web-one T=5d_train
+web-one:
+	uv run python -m tpviz.web.export --only $(T)
 
 web-all:
 	uv run python -m tpviz.web.export
@@ -59,11 +64,23 @@ site: web-page
 	cp web/dist/data.js $(SITE)/static/tpviz/data.js
 
 CHROME = /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
-# usage: make web-qa S=tp M=train T=42.5
+# usage: make web-qa S=5d M=train T=42 [THEME=dark]  — screenshots ONE figure
+# (fig= isolates it on the page) at step T in the given mode
+M ?= fwd
+THEME ?= dark
 web-qa:
 	mkdir -p qa/web
-	"$(CHROME)" --headless --disable-gpu --window-size=1600,1000 \
-		--screenshot=qa/web/step$(T).png --virtual-time-budget=4000 \
-		"file://$(PWD)/web/dist/index.html#step=$(T)&theme=dark"
+	"$(CHROME)" --headless --disable-gpu --window-size=1500,1150 \
+		--screenshot=qa/web/$(S)-$(M)-step$(T)-$(THEME).png --virtual-time-budget=6000 \
+		"file://$(PWD)/web/dist/index.html#fig=$(S)&mode=$(M)&step=$(T)&theme=$(THEME)"
 
-.PHONY: web web-all web-page site web-qa
+# the 5D combination: 480p iteration render / 1080p60 final
+lq-5d:
+	uv run manim render -ql --disable_caching src/tpviz/scenes/five_d.py FiveDScene
+
+hq-5d:
+	mkdir -p renders
+	uv run manim render -qh --disable_caching src/tpviz/scenes/five_d.py FiveDScene
+	cp media/videos/five_d/1080p60/FiveDScene.mp4 renders/5d.mp4
+
+.PHONY: web web-one web-all web-page site web-qa lq-5d hq-5d

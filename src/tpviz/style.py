@@ -39,6 +39,19 @@ DEVICE_BOX_FILL = "#1a2029"
 DEVICE_BOX_STROKE = "#3a4454"
 
 EXPERT_HUES = ["#f472b6", "#22d3ee", "#a3e635", "#fb923c"]
+
+# Mesh-axis attribution colors for multi-axis combos: every collective is
+# tinted by the axis (= the parallelism) that caused it. Distinct from the
+# tensor-kind colors above; the web maps them to --cv-ax* theme tokens.
+AXIS_HUES = {
+    "X": "#d8b4fe",      # FSDP / data
+    "Y": "#bef264",      # tensor
+    "C": "#fdba74",      # context
+    "Z": "#7dd3fc",      # expert
+    "stage": "#cbd5e1",  # pipeline
+}
+# 2-expert combos color tokens by expert with the expert-axis hue + neutral
+EXPERT2_HUES = [AXIS_HUES["Z"], "#e5e7eb"]
 MICROBATCH_HUES = ["#f472b6", "#22d3ee", "#a3e635", "#fb923c"]
 
 TEXT_COLOR = "#e5e7eb"
