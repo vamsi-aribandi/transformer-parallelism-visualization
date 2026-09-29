@@ -79,9 +79,7 @@
     along as you step, and clicking any line jumps straight there. Each figure opens in
     forward-only mode; switch to <em>+ Backward</em> to watch the full training step,
     where activations get saved beneath the weights that will need them, and every
-    backward operation cites the forward operation it differentiates. The final figure
-    combines all five strategies on one 32-device mesh; there, every collective is also
-    tagged with the mesh axis — and so the parallelism — it belongs to.
+    backward operation cites the forward operation it differentiates.
   </p>
 
 
@@ -223,72 +221,6 @@
     <figcaption>
       Pipeline parallelism, 2 stages × 4 microbatches: activations hop forward,
       gradients hop back, and the Gantt chart shows who idles.
-    </figcaption>
-  </figure>
-
-  <h2 id="5d">Putting it all together: 5D parallelism</h2>
-  <p>
-    Real training runs use all five at once, and the point of the singles was to
-    make this figure readable. Here is the same two-layer MoE transformer on
-    <strong>32 devices</strong>, two of everything: <span class="meq"><span class="mu">Mesh</span>({<span class="mu">&#x27;X&#x27;</span>: 2, <span class="mu">&#x27;Y&#x27;</span>: 2, <span class="mu">&#x27;C&#x27;</span>: 2, <span class="mu">&#x27;Z&#x27;</span>: 2, <span class="mu">&#x27;stage&#x27;</span>: 2})</span>. FSDP shards weights over
-    <span class="meq">X</span>, tensor parallelism shards features over <span class="meq">Y</span>, context parallelism shards the
-    sequence over <span class="meq">C</span>, the two experts live on <span class="meq">Z</span>, and the two layers sit on two
-    pipeline stages. The activations are sharded four ways <em>at once</em> —
-    <span class="meq"><span class="mu">In</span>[B<sub>XZ</sub>,  T<sub>C</sub>,  D<sub>Y</sub>]</span> — the batch over both <span class="meq">X</span> and <span class="meq">Z</span> (outside the MoE block the expert axis is
-    just more data parallelism), the sequence over <span class="meq">C</span>, the model width over <span class="meq">Y</span>.
-    Weights are <span class="meq">W<sub><span class="mu">qkv</span></sub>[D<sub>X</sub>,  H<sub>Y</sub>]</span>: FSDP-sharded on their input dimension, tensor-sharded on
-    their output dimension; expert weights add the expert axis, <span class="meq">W<sub><span class="mu">in</span></sub>[E<sub>Z</sub>,  D<sub>X</sub>,  F<sub>Y</sub>]</span>.
-  </p>
-  <p>
-    <strong>Reading the grid.</strong> Each stage is a 4×4 grid of devices, laid out
-    so that every mesh axis is a fixed geometric relation: rows are <span class="meq">X</span> outside and
-    <span class="meq">C</span> inside, columns are <span class="meq">Z</span> outside and <span class="meq">Y</span> inside (the margin labels give every
-    device's coordinates). So an FSDP partner is two rows away, a context partner is
-    the adjacent row, an expert partner is two columns away, a tensor partner is the
-    adjacent column, and the pipeline partner is the same cell in the other grid.
-    Every collective flies along exactly one of those relations, wrapped in a halo
-    of that axis's color, with a badge under the grid naming the axis and the
-    parallelism it implements; the same tag appears on every line of the program,
-    the step bar colors each collective by axis, and the tally under it counts them
-    (hover a chip to isolate that axis's steps, click to jump to its next
-    collective). Inside each box the weights of the active station sit on top and the
-    device's activation shard below; watch the four distinct weight-shard quadrants
-    across an <span class="meq">X</span>×<span class="meq">Y</span> block, and the one owned slab, half-band, half-width of every
-    activation deck.
-  </p>
-  <p>
-    <strong>What to notice.</strong> The program now interleaves the singles' signatures
-    in a fixed order, and the engine derives all of it from the shardings above.
-    Every matmul opens with FSDP's just-in-time <span class="meq"><span class="mu">AllGather</span><sub>X</sub></span> of the weight, then tensor
-    parallelism's <span class="meq"><span class="mu">AllGather</span><sub>Y</sub></span> of the activations, and closes with <span class="meq"><span class="mu">ReduceScatter</span><sub>Y,D</sub></span>; those two axes
-    account for most of the communication in both passes. Context parallelism only
-    speaks in attention — <span class="meq"><span class="mu">AllGather</span><sub>C</sub></span> of <span class="meq">K</span> and <span class="meq">V</span> forward, the mirrored ReduceScatters of
-    their gradients backward. The expert axis has two faces: inside the MoE block it
-    is the <span class="meq"><span class="mu">AllToAll</span><sub>Z</sub></span> pair, dispatching tokens into <span class="meq">X[E<sub>Z</sub>,  S<sub>XC</sub>,  D<sub>Y</sub>]</span> — note that <span class="meq">S</span> stays sharded
-    over <span class="meq">X</span> and <span class="meq">C</span>, because the AllToAll re-sorts tokens along <span class="meq">Z</span> <em>only</em> —
-    and everywhere else it behaves like plain data parallelism. The pipeline
-    contributes exactly one point-to-point send per direction, paid for in bubbles
-    rather than bytes.
-  </p>
-  <p>
-    The backward pass is where the axes visibly stack. An attention weight gradient
-    comes out of its matmul as <span class="meq"><span class="mu">d</span>W<sub><span class="mu">qkv</span></sub>[D,  H<sub>Y</sub>]{U<sub>XZC</sub>}</span>: an unreduced partial sum over <em>every axis
-    that sharded tokens</em>. It resolves in three attributed steps — <span class="meq"><span class="mu">ReduceScatter</span><sub>X,D</sub></span> lands it
-    on the FSDP shards, then <span class="meq"><span class="mu">AllReduce</span><sub>Z</sub></span> and <span class="meq"><span class="mu">AllReduce</span><sub>C</sub></span> sum the replicas the expert and context
-    axes hold — until it is <span class="meq"><span class="mu">d</span>W<sub><span class="mu">qkv</span></sub>[D<sub>X</sub>,  H<sub>Y</sub>]</span>, exactly the layout the weight lives in. Expert
-    weight gradients come out as <span class="meq"><span class="mu">d</span>W<sub><span class="mu">in</span></sub>[E<sub>Z</sub>,  D,  F<sub>Y</sub>]{U<sub>XC</sub>}</span> and skip the <span class="meq">Z</span> step: each expert owns its
-    weights outright, so there is nothing to sum over the expert axis. In practice
-    those three collectives fuse into a single ReduceScatter over the whole
-    <span class="meq">X</span>×<span class="meq">Z</span>×<span class="meq">C</span> group (and FSDP would shard over that whole group too); keeping them
-    apart here is what lets you see which parallelism is paying for each one.
-    Activation saving is not drawn in this figure — the singles cover the memory
-    story — and the pipeline runs one microbatch so the stages take turns; the
-    bubble math is in the pipeline section above.
-  </p>
-  <figure class="tpv-outer">
-    <tpviz-figure strategy="5d"></tpviz-figure>
-    <figcaption>
-      5D parallelism over <span class="meq"><span class="mu">Mesh</span>({<span class="mu">&#x27;X&#x27;</span>: 2, <span class="mu">&#x27;Y&#x27;</span>: 2, <span class="mu">&#x27;C&#x27;</span>: 2, <span class="mu">&#x27;Z&#x27;</span>: 2, <span class="mu">&#x27;stage&#x27;</span>: 2})</span>: 32 devices, every collective wrapped in the color of the mesh axis — and so the parallelism — that causes it.
     </figcaption>
   </figure>
 
