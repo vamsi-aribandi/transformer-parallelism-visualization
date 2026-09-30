@@ -169,7 +169,7 @@ SECTIONS = [
         strategy. The row under the step bar counts the collectives on each axis.""",
     ], None, None),
     (3, "Dense models: Llama 3", "dense4d", [
-        f"""<strong>FSDP × TP × CP × PP.</strong> Llama 3 405B used TP 8, PP 16 and FSDP 64 for
+        f"""FSDP × TP × CP × PP. Llama 3 405B used TP 8, PP 16 and FSDP 64 for
         8K-token sequences, and TP 8, CP 16, PP 16 and FSDP 8 for 128K-token sequences. TP is
         placed within a server, where bandwidth is highest, and data parallelism across servers.
         Nemotron-4 340B used TP 8, PP 12 and data parallelism; Nemotron-H used TP 8 and 768-way
@@ -179,23 +179,22 @@ SECTIONS = [
         attention, and PP adds one send in each direction.""",
     ], "dense4d", f"FSDP × TP × CP × PP over {mesh(X=2, Y=2, C=2, stage=2)}, 16 devices."),
     (3, "Open MoE models: DeepSeek and Kimi", "moe4d", [
-        f"""<strong>EP × CP × PP × ZeRO-1, without TP.</strong> DeepSeek-V3 used PP 16, EP 64 across
-        8 nodes and ZeRO-1, and no tensor parallelism. Kimi K2 used PP 16, EP 16 and ZeRO-1.
-        Neither report uses context parallelism; DeepSeek-V3 extends its context to 128K with
-        YaRN. GLM-4.5V adds CP 4 for its long-context stage, and
-        {a("DeepSeek-V4", "https://arxiv.org/abs/2606.19348")} and
+        f"""EP × CP × PP × ZeRO-1, without TP. DeepSeek-V3 used PP 16, EP 64 across 8 nodes and
+        ZeRO-1, with no tensor parallelism. Kimi K2 used PP 16, EP 16 and ZeRO-1. Neither used
+        context parallelism; DeepSeek-V3 extends its context to 128K with YaRN. Their successors
+        add it: {a("DeepSeek-V4", "https://arxiv.org/abs/2606.19348")} and
         {a("Kimi K3", "https://arxiv.org/abs/2607.24653")} both use context parallelism for
-        long-context training. The figure uses {mesh(X=2, C=2, Z=2, stage=2)} with
-        {t("In", BTD, {"B": "XZ", "T": "C"})}. The batch is sharded over both {X} and {Z}, since
-        outside the MoE layers the expert axis is another data axis. The forward pass has no
-        weight AllGathers. It has the K and V AllGathers over {C}, two AllToAlls over {Z} per MoE
-        layer, and the send between stages. In the backward pass, each attention weight gradient
-        is ReduceScattered over {X} and AllReduced over {Z} and {C}. Each expert weight gradient
-        is ReduceScattered over {X} and AllReduced over {C} only, since each expert is held at a
-        single {Z} coordinate.""",
+        long-context training, and GLM-4.5V adds CP 4 for its long-context stage. The figure uses
+        {mesh(X=2, C=2, Z=2, stage=2)} with {t("In", BTD, {"B": "XZ", "T": "C"})}. The batch is
+        sharded over both {X} and {Z}, since outside the MoE layers the expert axis is another
+        data axis. The forward pass has no weight AllGathers. It has the K and V AllGathers over
+        {C}, two AllToAlls over {Z} per MoE layer, and the send between stages. In the backward
+        pass, each attention weight gradient is ReduceScattered over {X} and AllReduced over {Z}
+        and {C}. Each expert weight gradient is ReduceScattered over {X} and AllReduced over {C}
+        only, since each expert is held at a single {Z} coordinate.""",
     ], "moe4d", f"EP × CP × PP × ZeRO-1 over {mesh(X=2, C=2, Z=2, stage=2)}, 16 devices."),
     (3, "All five: Nemotron 3 and Qwen3-VL", "5d", [
-        f"""<strong>FSDP × TP × CP × EP × PP.</strong> The long-context stage of Nemotron 3 Nano
+        f"""FSDP × TP × CP × EP × PP. The long-context stage of Nemotron 3 Nano
         used CP 8, TP 8, EP 8 and PP 4, and Nemotron 3 Ultra used EP 128. Qwen3-VL uses TP, PP,
         CP, EP and ZeRO-1 on up to 10,000 GPUs. The figure uses 32 devices,
         {mesh(X=2, Y=2, C=2, Z=2, stage=2)}, with

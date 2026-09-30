@@ -709,11 +709,11 @@ body:not(.tpv-page) .tpv-canvas text {
 
   <h3 id="dense4d">Dense models: Llama 3</h3>
   <p>
-    <strong>FSDP × TP × CP × PP.</strong> Llama 3 405B used TP 8, PP 16 and FSDP 64 for
-    8K-token sequences, and TP 8, CP 16, PP 16 and FSDP 8 for 128K-token sequences. TP is
-    placed within a server, where bandwidth is highest, and data parallelism across servers.
-    Nemotron-4 340B used TP 8, PP 12 and data parallelism; Nemotron-H used TP 8 and 768-way
-    data parallelism. The figure uses <span class="meq"><span class="mu">Mesh</span>({<span
+    FSDP × TP × CP × PP. Llama 3 405B used TP 8, PP 16 and FSDP 64 for 8K-token sequences,
+    and TP 8, CP 16, PP 16 and FSDP 8 for 128K-token sequences. TP is placed within a
+    server, where bandwidth is highest, and data parallelism across servers. Nemotron-4 340B
+    used TP 8, PP 12 and data parallelism; Nemotron-H used TP 8 and 768-way data
+    parallelism. The figure uses <span class="meq"><span class="mu">Mesh</span>({<span
     class="mu">&#x27;X&#x27;</span>: 2, <span class="mu">&#x27;Y&#x27;</span>: 2, <span
     class="mu">&#x27;C&#x27;</span>: 2, <span class="mu">&#x27;stage&#x27;</span>:
     2})</span> with <span class="meq"><span class="mu">In</span>[B<sub>X</sub>,
@@ -730,25 +730,25 @@ body:not(.tpv-page) .tpv-canvas text {
 
   <h3 id="moe4d">Open MoE models: DeepSeek and Kimi</h3>
   <p>
-    <strong>EP × CP × PP × ZeRO-1, without TP.</strong> DeepSeek-V3 used PP 16, EP 64 across
-    8 nodes and ZeRO-1, and no tensor parallelism. Kimi K2 used PP 16, EP 16 and ZeRO-1.
-    Neither report uses context parallelism; DeepSeek-V3 extends its context to 128K with
-    YaRN. GLM-4.5V adds CP 4 for its long-context stage, and <a
-    href="https://arxiv.org/abs/2606.19348">DeepSeek-V4</a> and <a
+    EP × CP × PP × ZeRO-1, without TP. DeepSeek-V3 used PP 16, EP 64 across 8 nodes and
+    ZeRO-1, with no tensor parallelism. Kimi K2 used PP 16, EP 16 and ZeRO-1. Neither used
+    context parallelism; DeepSeek-V3 extends its context to 128K with YaRN. Their successors
+    add it: <a href="https://arxiv.org/abs/2606.19348">DeepSeek-V4</a> and <a
     href="https://arxiv.org/abs/2607.24653">Kimi K3</a> both use context parallelism for
-    long-context training. The figure uses <span class="meq"><span
-    class="mu">Mesh</span>({<span class="mu">&#x27;X&#x27;</span>: 2, <span
-    class="mu">&#x27;C&#x27;</span>: 2, <span class="mu">&#x27;Z&#x27;</span>: 2, <span
-    class="mu">&#x27;stage&#x27;</span>: 2})</span> with <span class="meq"><span
-    class="mu">In</span>[B<sub>XZ</sub>, T<sub>C</sub>, D]</span>. The batch is sharded over
-    both <span class="meq">X</span> and <span class="meq">Z</span>, since outside the MoE
-    layers the expert axis is another data axis. The forward pass has no weight AllGathers.
-    It has the K and V AllGathers over <span class="meq">C</span>, two AllToAlls over <span
-    class="meq">Z</span> per MoE layer, and the send between stages. In the backward pass,
-    each attention weight gradient is ReduceScattered over <span class="meq">X</span> and
-    AllReduced over <span class="meq">Z</span> and <span class="meq">C</span>. Each expert
-    weight gradient is ReduceScattered over <span class="meq">X</span> and AllReduced over
-    <span class="meq">C</span> only, since each expert is held at a single <span
+    long-context training, and GLM-4.5V adds CP 4 for its long-context stage. The figure
+    uses <span class="meq"><span class="mu">Mesh</span>({<span
+    class="mu">&#x27;X&#x27;</span>: 2, <span class="mu">&#x27;C&#x27;</span>: 2, <span
+    class="mu">&#x27;Z&#x27;</span>: 2, <span class="mu">&#x27;stage&#x27;</span>:
+    2})</span> with <span class="meq"><span class="mu">In</span>[B<sub>XZ</sub>,
+    T<sub>C</sub>, D]</span>. The batch is sharded over both <span class="meq">X</span> and
+    <span class="meq">Z</span>, since outside the MoE layers the expert axis is another data
+    axis. The forward pass has no weight AllGathers. It has the K and V AllGathers over
+    <span class="meq">C</span>, two AllToAlls over <span class="meq">Z</span> per MoE layer,
+    and the send between stages. In the backward pass, each attention weight gradient is
+    ReduceScattered over <span class="meq">X</span> and AllReduced over <span
+    class="meq">Z</span> and <span class="meq">C</span>. Each expert weight gradient is
+    ReduceScattered over <span class="meq">X</span> and AllReduced over <span
+    class="meq">C</span> only, since each expert is held at a single <span
     class="meq">Z</span> coordinate.
   </p>
   <figure class="tpv-outer">
@@ -760,12 +760,12 @@ body:not(.tpv-page) .tpv-canvas text {
 
   <h3 id="5d">All five: Nemotron 3 and Qwen3-VL</h3>
   <p>
-    <strong>FSDP × TP × CP × EP × PP.</strong> The long-context stage of Nemotron 3 Nano
-    used CP 8, TP 8, EP 8 and PP 4, and Nemotron 3 Ultra used EP 128. Qwen3-VL uses TP, PP,
-    CP, EP and ZeRO-1 on up to 10,000 GPUs. The figure uses 32 devices, <span
-    class="meq"><span class="mu">Mesh</span>({<span class="mu">&#x27;X&#x27;</span>: 2,
-    <span class="mu">&#x27;Y&#x27;</span>: 2, <span class="mu">&#x27;C&#x27;</span>: 2,
-    <span class="mu">&#x27;Z&#x27;</span>: 2, <span class="mu">&#x27;stage&#x27;</span>:
+    FSDP × TP × CP × EP × PP. The long-context stage of Nemotron 3 Nano used CP 8, TP 8, EP
+    8 and PP 4, and Nemotron 3 Ultra used EP 128. Qwen3-VL uses TP, PP, CP, EP and ZeRO-1 on
+    up to 10,000 GPUs. The figure uses 32 devices, <span class="meq"><span
+    class="mu">Mesh</span>({<span class="mu">&#x27;X&#x27;</span>: 2, <span
+    class="mu">&#x27;Y&#x27;</span>: 2, <span class="mu">&#x27;C&#x27;</span>: 2, <span
+    class="mu">&#x27;Z&#x27;</span>: 2, <span class="mu">&#x27;stage&#x27;</span>:
     2})</span>, with <span class="meq"><span class="mu">In</span>[B<sub>XZ</sub>,
     T<sub>C</sub>, D<sub>Y</sub>]</span>. Each stage is a 4 × 4 grid with rows <span
     class="meq">X</span> and <span class="meq">C</span> and columns <span
