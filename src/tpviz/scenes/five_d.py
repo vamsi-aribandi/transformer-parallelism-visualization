@@ -91,49 +91,40 @@ def axis_of_step(step: Step) -> str | None:
 
 
 def attribution_caption(cfg: StrategyConfig, step: Step) -> str | None:
-    """Captions that say WHICH parallelism a collective belongs to and why."""
+    """Program caption for a collective: the strategy and axis, then what it does."""
     ax = axis_of_step(step)
-    if ax is None:
-        return None
-    role = cfg.axis_roles.get(ax, ax)
-    who = f"{AXIS_LONG.get(ax, role)} (axis {ax})"
+    if ax is None or isinstance(step, P2PSendStep):
+        return step.caption
+    who = f"{cfg.axis_roles.get(ax, ax)} over {ax}: "
+    bwd = step.backward
     if isinstance(step, AllGatherStep):
-        if step.src.kind == "weight" and step.caption:
-            return step.caption  # ZeRO-1's post-update gather explains itself
         if step.src.kind == "weight":
-            return (f"{who}: re-gather the weight for the backward matmul — it was discarded after the forward"
-                    if step.backward else
-                    f"{who}: gather this weight's shards just in time, use it, discard it")
+            if step.caption:
+                return who + step.caption
+            return who + ("AllGather the weight again for the backward matmul." if bwd
+                          else "AllGather the weight before the matmul; it is freed after.")
         if step.src.kind == "kv":
-            return (f"{who}: the saved K/V shards are re-gathered for the attention backward"
-                    if step.backward else
-                    f"{who}: every query needs every key and value — gather K/V across the sequence shards")
-        if step.backward:
-            return f"{who}: gather the incoming gradient over the tensor axis (dual of the forward ReduceScatter)"
-        return f"{who}: gather the D-sharded activations before the matmul"
+            return who + ("AllGather the saved K and V shards again." if bwd
+                          else "AllGather K and V over the sequence shards.")
+        return who + ("AllGather the gradient over D." if bwd else "AllGather the activations over D.")
     if isinstance(step, ReduceScatterStep):
         if step.src.name.startswith("dW"):
-            return f"{who}: the weight gradient scatters back onto the shards the weight lives in"
+            return who + "ReduceScatter the weight gradient."
         if step.src.name in ("dK", "dV"):
-            return f"{who}: every query shard contributed to every token's dK/dV — scatter them back over the sequence"
-        if step.backward:
-            return f"{who}: the partial dX resolves and re-shards on D (dual of the forward AllGather)"
-        return f"{who}: the partial sums resolve — each device keeps its slice of D"
+            return who + f"ReduceScatter {step.src.name} back over the sequence."
+        return who + ("ReduceScatter the partial dX over D." if bwd
+                      else "ReduceScatter the partial sums over D.")
     if isinstance(step, AllReduceStep):
         if ax == "Z":
-            return "Outside the MoE block the expert axis Z is plain data parallelism — attention weight gradients sum over it"
+            return who + "AllReduce the weight gradient. Outside the MoE layers, Z is a data axis."
         if ax == "C":
-            return "The context axis C replicates every weight — its gradient contributions must be summed"
-        return f"{who}: unreduced partial sums resolve everywhere"
+            return who + "AllReduce the weight gradient. The weights are replicated over C."
+        return who + "AllReduce the partial sums."
     if isinstance(step, AllToAllStep):
+        what = "token gradient" if bwd else "token"
         if step.direction == "dispatch":
-            keep = step.out.axes_of("S")
-            tail = (f" — S stays sharded over {' and '.join(keep)}" if keep else "")
-            return (f"{who}: token gradients travel to the expert that processed them"
-                    if step.backward else
-                    f"{who}: each token travels to the device holding its expert{tail}")
-        return (f"{who}: token gradients return home" if step.backward
-                else f"{who}: processed tokens return home to their batch/sequence positions")
+            return who + f"Send each {what} to the device that holds its expert."
+        return who + f"Send each {what} back to its original device."
     return step.caption
 
 

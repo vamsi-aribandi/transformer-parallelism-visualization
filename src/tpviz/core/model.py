@@ -73,8 +73,7 @@ def stage_send(cfg: StrategyConfig, x: LTensor, layer_from: int, *, backward: bo
     return P2PSendStep(
         tensor=x, src_stage=a, dst_stage=b, tick=min(a, b), layer=layer_from,
         phase="pipeline", backward=backward, note_tex=note_tex,
-        caption=(f"Stage {a} hands the {'gradient' if backward else 'activations'} to stage {b}: "
-                 "a single point-to-point send"),
+        caption=f"Send the {'gradients' if backward else 'activations'} from stage {a} to stage {b}.",
     )
 
 

@@ -62,8 +62,7 @@ def tensor_tooltip(tensor: dict, atlas) -> dict:
             n = mesh.size(ax)
             size = sizes[d] // n
             lo = mesh.coord(ax, device) * size
-            over = ax if len(ax) == 1 else f"{ax} (both axes at once)"
-            parts.append(f"{d} sharded {n}-way over {over} — this device holds {d}∈[{lo}, {lo + size})")
+            parts.append(f"{d} sharded {n} ways over {ax}; this device holds {d}∈[{lo}, {lo + size})")
         shard_desc = "; ".join(parts)
         if others and len(mesh.axes) > 1:
             shard_desc += f"; replicated over {', '.join(others)}"

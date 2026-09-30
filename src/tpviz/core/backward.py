@@ -143,8 +143,9 @@ def _tag_note(steps: list[Step], rec: LayerRecord, weight_name: str) -> None:
             s.note_tex = FROM_FWD + fwd.tex()
 
 
-FROM_FWD = r"\text{from forward:}\quad "
-DUAL_FWD = r"\text{dual of forward's}\quad "
+FROM_FWD = r"\text{Forward:}\quad "
+DUAL_FWD = r"\text{Backward of:}\quad "
+REPEAT_FWD = r"\text{Repeats the forward}\quad "
 
 
 def _tag_collective_notes(steps: list[Step], rec: LayerRecord, cfg: StrategyConfig) -> None:
@@ -175,7 +176,7 @@ def _tag_collective_notes(steps: list[Step], rec: LayerRecord, cfg: StrategyConf
             fwd = find(AllGatherStep, axis=st.axis, phase=st.phase, dim=st.dim,
                        base=st.src.name)
             if fwd is not None:
-                st.note_tex = r"\text{same gather as forward (weights re-gathered):}\quad " + fwd.tex()
+                st.note_tex = REPEAT_FWD + fwd.tex()
         elif isinstance(st, AllGatherStep):
             fwd = find(ReduceScatterStep, axis=st.axis, phase=st.phase, dim=st.dim)
             if fwd is not None:
@@ -184,15 +185,9 @@ def _tag_collective_notes(steps: list[Step], rec: LayerRecord, cfg: StrategyConf
             if st.src.name.startswith("dW"):
                 w = make_weight(cfg, st.src.name[1:])
                 if st.axis in w.axes_of(st.scatter_dim):
-                    st.note_tex = (
-                        rf"\text{{forward kept}}\ {w.tex()}\ "
-                        rf"\text{{sharded --- its gradient scatters back to the same shards}}"
-                    )
+                    st.note_tex = rf"{w.tex()}\ \text{{is sharded, so}}\ \mathrm{{d}}W\ \text{{is sharded the same way.}}"
                 else:
-                    st.note_tex = (
-                        rf"\text{{ZeRO-1: }}{w.tex()}\ \text{{is replicated, but each device keeps}}"
-                        rf"\ \text{{only a shard of the gradient and optimizer state}}"
-                    )
+                    st.note_tex = r"\text{ZeRO-1 keeps one shard of the gradient and optimizer state per device.}"
             else:
                 base = st.src.name[1:] if st.src.name.startswith("d") else None
                 fwd = find(AllGatherStep, axis=st.axis, phase=st.phase,
@@ -203,10 +198,7 @@ def _tag_collective_notes(steps: list[Step], rec: LayerRecord, cfg: StrategyConf
                     st.note_tex = DUAL_FWD + fwd.tex()
         elif isinstance(st, AllReduceStep) and st.src.name.startswith("dW"):
             w = make_weight(cfg, st.src.name[1:])
-            st.note_tex = (
-                rf"\text{{forward replicated}}\ {w.tex()}\ \text{{over}}\ {st.axis}\ "
-                rf"\text{{--- every replica's gradient must be summed}}"
-            )
+            st.note_tex = rf"{w.tex()}\ \text{{is replicated over}}\ {st.axis}\text{{, so}}\ \mathrm{{d}}W\ \text{{is summed over}}\ {st.axis}\text{{.}}"
         elif isinstance(st, AllToAllStep):
             want = "combine" if st.direction == "dispatch" else "dispatch"
             for f in rec.fwd_coll:
@@ -260,7 +252,7 @@ def backward_mlp(cfg: StrategyConfig, rec: LayerRecord, d_out: LTensor, layer: i
     dz = replace(dtmp, name="dZ")
     steps.append(GeluStep(
         src=dtmp, out=dz, layer=layer, phase=phase,
-        caption="through the gelu: multiply by its derivative at the saved pre-activation Z",
+        caption="Multiply by the gelu derivative at the saved pre-activation Z.",
         note_tex=FROM_FWD + GeluStep(src=z_fwd, out=tmp_fwd).tex(),
     ))
 
@@ -324,7 +316,7 @@ def backward_moe(cfg: StrategyConfig, rec: LayerRecord, d_out: LTensor, layer: i
     dz = replace(dtmp, name="dZ")
     steps.append(GeluStep(
         src=dtmp, out=dz, layer=layer, phase=phase,
-        caption="through the gelu: multiply by its derivative at the saved pre-activation Z",
+        caption="Multiply by the gelu derivative at the saved pre-activation Z.",
         note_tex=FROM_FWD + GeluStep(src=z_fwd, out=tmp_fwd).tex(),
     ))
 
@@ -391,8 +383,7 @@ def backward_attention(cfg: StrategyConfig, rec: LayerRecord, d_out: LTensor, la
                             and f.src.name == shard.name), None)
                 steps.append(AllGatherStep(
                     src=shard, out=full, axis=ctx, dim="T", layer=layer, phase=phase,
-                    note_tex=(r"\text{same gather as forward (saved K/V shards"
-                              r" re-gathered):}\quad " + fwd.tex()) if fwd else None,
+                    note_tex=(REPEAT_FWD + fwd.tex()) if fwd else None,
                 ))
         # every query shard contributes to every dK/dV token: partial sums
         dk = replace(rec.k.grad(), name="dK", partial=frozenset({ctx}))
@@ -450,7 +441,7 @@ def train_steps(cfg: StrategyConfig) -> list[Step]:
         GradInitStep(
             out=d_out, layer=cfg.n_layers, phase="mlp" if cfg.moe is None else "moe",
             backward=True,
-            caption="Backward starts from the loss: dOut = ∂L/∂Out",
+            caption="The backward pass starts from the loss gradient dOut = ∂L/∂Out.",
         )
     )
     for layer in range(cfg.n_layers, 0, -1):
@@ -492,14 +483,12 @@ def update_steps(cfg: StrategyConfig) -> list[Step]:
                 grad = replace(shard, name=f"d{name}", kind="grad")
                 steps.append(OptimizerStep(
                     weight=w, grad=grad, out=shard, layer=layer, phase=phase, backward=True,
-                    caption="ZeRO-1: each device updates only its shard of the weight from "
-                            "its shard of the gradient and optimizer state",
+                    caption="Each device updates its shard of the weight.",
                 ))
                 steps.append(AllGatherStep(
                     src=shard, out=w, axis=axis, dim=dim, layer=layer, phase=phase,
                     backward=True,
-                    caption="The updated shards gather: with the ReduceScatter before the "
-                            "optimizer step, this is an AllReduce split in two",
+                    caption="AllGather the updated weight shards.",
                     note_tex=r"\text{ReduceScatter} + \text{AllGather} = \text{AllReduce}",
                 ))
     return steps

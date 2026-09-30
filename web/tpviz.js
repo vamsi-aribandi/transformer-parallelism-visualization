@@ -614,7 +614,7 @@
         if (st.fwdStep !== undefined) {
           const link = document.createElement("button");
           link.className = "tpv-fwd-link";
-          link.textContent = `↳ jump to that forward step`;
+          link.textContent = `go to the forward step`;
           link.addEventListener("click", (ev) => {
             ev.stopPropagation();
             this.stop();
@@ -816,7 +816,7 @@
         if (data.partial) {
           const pw = document.createElement("div");
           pw.className = "tpv-tt-partial";
-          pw.textContent = `unreduced partial sum over ${data.partial.join(", ")}`;
+          pw.textContent = `partial sum over ${data.partial.join("")}`;
           tip.appendChild(pw);
         }
         tip.hidden = false;
@@ -843,11 +843,11 @@
 
   /* ---------------------------- ring-collective algorithm inset ---------- */
   const RING_TITLES = {
-    AllGather: "how it runs: bidirectional ring AllGather — each shard splits in half and circulates both ways; every device keeps a copy as it passes",
-    ReduceScatter: "how it runs: bidirectional ring ReduceScatter — one running sum per chunk circles the ring (half clockwise, half counter); every node it passes adds its contribution",
-    AllReduce: "how it runs: ReduceScatter, then AllGather — reduce toward owners, then circulate the results",
-    AllToAll: "how it runs: ring AllToAll — every chunk hops the shortest way around to its destination device",
-    P2PSend: "how it runs: a single point-to-point send between neighboring stages",
+    AllGather: "Bidirectional ring AllGather: each shard is split in half, the halves travel in opposite directions, and every device keeps a copy of each shard it receives.",
+    ReduceScatter: "Bidirectional ring ReduceScatter: a running sum for each shard travels around the ring, and each device adds its contribution as it passes.",
+    AllReduce: "AllReduce as a ReduceScatter followed by an AllGather.",
+    AllToAll: "Ring AllToAll: each chunk takes the shortest path around the ring to its destination.",
+    P2PSend: "A single point-to-point send between neighboring stages.",
   };
 
   TPVizFigure.prototype.updateAlgo = function (kind, axis) {
@@ -862,7 +862,7 @@
     const ax = this.multi && axis ? axis : null;
     const n = ax ? (this.axes[ax]?.n || 2) : 4;
     const who = ax && ax !== "stage"
-      ? `over axis ${ax} (${this.axes[ax]?.role || ax}), ${n} devices — `
+      ? `Axis ${ax} (${this.axes[ax]?.role || ax}), ${n} devices. `
       : "";
     this.algo.querySelector(".tpv-algo-title").textContent = who + RING_TITLES[kind];
     this.runAlgo(kind, ++this._algoToken, n, ax);

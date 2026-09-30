@@ -23,301 +23,291 @@
 <article>
   <h1>A Visual Guide to Parallel Transformers</h1>
   <p class="dek">
-    How a transformer's forward and backward passes are sharded across devices: each axis of
-    parallelism on its own, then the combinations frontier models train with, in the
-    notation of the <a href="https://jax-ml.github.io/scaling-book/">JAX scaling book</a>.
+    How a transformer's forward and backward passes are sharded across devices, first one
+    strategy at a time and then in the combinations used to train recent models. The
+    notation follows the <a href="https://jax-ml.github.io/scaling-book/">JAX scaling
+    book</a>.
   </p>
 
-  <h2 id="notation">How to read the notation</h2>
+  <h2 id="notation">Notation</h2>
   <p>
-    Everything here uses the scaling book's <a href="https://jax-ml.github.io/scaling-
-    book/sharding/">sharding notation</a>. Devices form a <em>mesh</em>: <span
-    class="meq"><span class="mu">Mesh</span>({<span class="mu">&#x27;X&#x27;</span>:
-    4})</span> is four devices along one axis named <span class="meq">X</span>. A subscript
-    names the mesh axis a dimension is split over: <span class="meq"><span
-    class="mu">In</span>[B<sub>X</sub>, T, D]</span> means the batch is sharded four ways
-    over <span class="meq">X</span>, so each device holds a <span class="meq">[B/4, T,
-    D]</span> slice. A dimension without a subscript is not split, and a tensor with no
-    subscripts is replicated. A trailing <span class="meq">{U<sub>X</sub>}</span> marks an
-    <strong>unreduced partial sum</strong>: each device holds a full-shaped tensor that is
-    only its contribution, and the contributions still have to be summed over <span
-    class="meq">X</span>. That sum is what AllReduce and ReduceScatter do.
+    We use the <a href="https://jax-ml.github.io/scaling-book/sharding/">sharding
+    notation</a> from the scaling book. A mesh such as <span class="meq"><span
+    class="mu">Mesh</span>({<span class="mu">&#x27;X&#x27;</span>: 4})</span> is a set of
+    four devices along one axis named <span class="meq">X</span>. A subscript on a dimension
+    gives the mesh axis that dimension is sharded over. For example, <span class="meq"><span
+    class="mu">In</span>[B<sub>X</sub>, T, D]</span> is sharded along the batch over <span
+    class="meq">X</span>, so each device holds an array of shape <span class="meq">[B/4, T,
+    D]</span>. A dimension with no subscript is replicated. A trailing <span
+    class="meq">{U<sub>X</sub>}</span> marks a partial sum: each device holds an array of
+    the full shape, and the true value is the sum of these arrays over <span
+    class="meq">X</span>. AllReduce and ReduceScatter compute this sum.
   </p>
   <p>
-    Sizes assumed by the tooltips: <span class="meq">B=8</span> sequences of <span
-    class="meq">T=128</span> tokens, <span class="meq">D=1024</span> model width, <span
-    class="meq">F=4096</span> MLP width, <span class="meq">H=1024</span> the attention heads
-    concatenated, <span class="meq">E=4</span> experts with <span class="meq">S=256</span>
-    routed tokens each, all in bf16.
+    The tooltips assume <span class="meq">B=8</span>, <span class="meq">T=128</span>, <span
+    class="meq">D=1024</span>, <span class="meq">F=4096</span>, <span
+    class="meq">H=1024</span> (all attention heads concatenated), <span
+    class="meq">E=4</span> experts with <span class="meq">S=256</span> tokens routed to
+    each, and bf16.
   </p>
 
-  <h2 id="figures">How to read the figures</h2>
+  <h2 id="figures">Reading the figures</h2>
   <p>
-    Model depth runs left to right: the input enters at <span class="meq"><span
-    class="mu">In</span></span>, passes each layer's attention and MLP stations, and leaves
-    at <span class="meq"><span class="mu">Out</span></span>. Devices are horizontal lanes;
-    when they communicate, tensors fly vertically between lanes. Weights are <span class="sw
-    wt"></span> blue, activations <span class="sw act"></span> amber, keys and values <span
-    class="sw kv"></span> teal, gradients <span class="sw grad"></span> rose. A dashed
-    outline is the full logical tensor; the solid patch inside it is the slice this device
-    holds, drawn at its offset. Hover a tensor for its shape, sharding and memory.
+    The model runs from left to right: <span class="meq"><span class="mu">In</span></span>,
+    then the attention and MLP blocks of each layer, then <span class="meq"><span
+    class="mu">Out</span></span>. Each device is a horizontal lane, so tensors sent between
+    devices move vertically. Weights are <span class="sw wt"></span> blue, activations <span
+    class="sw act"></span> amber, keys and values <span class="sw kv"></span> teal, and
+    gradients <span class="sw grad"></span> rose. A dashed outline is the full array and the
+    solid part is the shard held by that device. Hovering over a tensor shows its shape,
+    sharding and memory.
   </p>
   <p>
-    Each segment of the step bar is one operation. Click to jump to the state after it, or
-    press play. While the current operation is a collective, the panel under the canvas
-    shows how it runs on the wire, hop by hop. The program beside the canvas lists every
-    operation in book notation and follows along. Figures open forward-only; <em>+
-    Backward</em> adds the rest of the training step, where saved activations park under the
-    weights that need them and every backward operation cites the forward operation it
-    differentiates.
+    Each segment of the step bar is one operation. Click a segment to see the state after
+    that operation, or press play. For a collective, the panel below the canvas shows how it
+    runs on a ring of devices. The program on the right lists every operation. The figures
+    start with the forward pass; <em>+ Backward</em> adds the backward pass, including the
+    activations saved for it, and links each backward operation to the forward operation it
+    comes from.
   </p>
 
   <h2 id="axes">The axes of transformer sharding</h2>
   <p>
-    Each way of splitting a transformer is a choice of dimension to shard: the batch, the
-    sequence, the weights' features, the experts, or the layers. Here each runs alone on a
-    four-device mesh, so its communication is visible in isolation.
+    Each strategy below shards one thing: the batch, the optimizer state, the weights, the
+    feature dimensions, the sequence, the experts, or the layers. Each runs on four devices.
   </p>
 
   <h3 id="dp">Data parallelism</h3>
   <p>
-    Replicate the weights, shard the batch: <span class="meq"><span
-    class="mu">In</span>[B<sub>X</sub>, T, D]</span>. The forward pass communicates nothing.
-    The backward does: each device computes weight gradients from its quarter of the batch,
-    so every <span class="meq"><span class="mu">d</span>W[D, F]{U<sub>X</sub>}</span> is a
-    partial sum, and each one is AllReduced over <span class="meq">X</span> before the
-    optimizer step.
+    The batch is sharded, <span class="meq"><span class="mu">In</span>[B<sub>X</sub>, T,
+    D]</span>, and the weights are replicated. The forward pass needs no communication. In
+    the backward pass, each device computes the weight gradients from its part of the batch,
+    so each gradient <span class="meq"><span class="mu">d</span>W[D,
+    F]{U<sub>X</sub>}</span> is a partial sum. It is AllReduced over <span
+    class="meq">X</span> before the optimizer step.
   </p>
   <figure class="tpv-outer">
     <tpviz-figure strategy="dp"></tpviz-figure>
     <figcaption>
-      Data parallelism over <span class="meq"><span class="mu">Mesh</span>({<span class="mu">&#x27;X&#x27;</span>: 4})</span>: a silent forward pass, one AllReduce per weight gradient.
+      Data parallelism over <span class="meq"><span class="mu">Mesh</span>({<span class="mu">&#x27;X&#x27;</span>: 4})</span>. The forward pass has no communication; the backward pass has one AllReduce per weight gradient.
     </figcaption>
   </figure>
 
-  <h3 id="zero1">ZeRO-1: shard the optimizer, keep the weights</h3>
+  <h3 id="zero1">ZeRO-1</h3>
   <p>
-    Data parallelism also replicates the optimizer state, which for Adam is two more model-
-    sized tensors. <strong>ZeRO-1</strong> keeps the weights replicated and shards the
-    optimizer state over <span class="meq">X</span>. Only the gradient step changes. Each
-    <span class="meq"><span class="mu">d</span>W[D, F]{U<sub>X</sub>}</span> is
-    <strong>ReduceScattered</strong> rather than AllReduced, so a device holds <span
-    class="meq"><span class="mu">d</span>W[D<sub>X</sub>, F]</span>; it updates its slice
-    <span class="meq">W[D<sub>X</sub>, F]</span>; and an <strong>AllGather</strong> of the
-    updated slices makes the weights whole again. An AllReduce is a ReduceScatter followed
-    by an AllGather, so ZeRO-1 moves the same bytes as data parallelism, with the optimizer
-    step in between. This is the data axis DeepSeek-V3 and Kimi K2 train with.
+    Data parallelism also replicates the optimizer state, which for Adam is two more arrays
+    the size of the weights. ZeRO-1 shards the optimizer state over <span
+    class="meq">X</span> and keeps the weights replicated. The forward pass is unchanged. In
+    the backward pass, each gradient <span class="meq"><span class="mu">d</span>W[D,
+    F]{U<sub>X</sub>}</span> is ReduceScattered instead of AllReduced, giving <span
+    class="meq"><span class="mu">d</span>W[D<sub>X</sub>, F]</span>. Each device updates its
+    shard of the weights, <span class="meq">W[D<sub>X</sub>, F]</span>, and an AllGather
+    gives every device the full updated weights. An AllReduce is a ReduceScatter followed by
+    an AllGather, so ZeRO-1 has the same communication cost as data parallelism.
   </p>
   <figure class="tpv-outer">
     <tpviz-figure strategy="zero1"></tpviz-figure>
     <figcaption>
-      ZeRO-1 over <span class="meq"><span class="mu">Mesh</span>({<span class="mu">&#x27;X&#x27;</span>: 4})</span>: ReduceScatter, a sharded optimizer step, then an AllGather of the updated weights.
+      ZeRO-1 over <span class="meq"><span class="mu">Mesh</span>({<span class="mu">&#x27;X&#x27;</span>: 4})</span>. Each weight gradient is ReduceScattered, each device updates its shard, and the updated shards are AllGathered.
     </figcaption>
   </figure>
 
   <h3 id="fsdp">Fully-sharded data parallelism (ZeRO-3)</h3>
   <p>
-    ZeRO-1 still replicates every weight. FSDP shards them too, along the same axis: <span
-    class="meq">W<sub><span class="mu">in</span></sub>[D<sub>X</sub>, F]</span>, <span
+    FSDP also shards the weights over <span class="meq">X</span>: <span
+    class="meq">W<sub><span class="mu">in</span></sub>[D<sub>X</sub>, F]</span> and <span
     class="meq">W<sub><span class="mu">out</span></sub>[F, D<sub>X</sub>]</span>. Each
-    weight is <strong>AllGathered just before its matmul</strong> and discarded right after;
-    the station header shows the gathered shape and back. The backward gathers each weight
-    again, and each gradient <strong>ReduceScatters</strong> back to the layout the weights
-    live in. Memory of a shard, communication of a gather, in both passes.
+    weight is AllGathered just before its matmul and freed just after. The backward pass
+    AllGathers each weight again, and each weight gradient is ReduceScattered so that it is
+    sharded like its weight.
   </p>
   <figure class="tpv-outer">
     <tpviz-figure strategy="fsdp"></tpviz-figure>
     <figcaption>
-      FSDP over <span class="meq"><span class="mu">Mesh</span>({<span class="mu">&#x27;X&#x27;</span>: 4})</span>: just-in-time weight gathers forward, re-gathers and gradient ReduceScatters backward.
+      FSDP over <span class="meq"><span class="mu">Mesh</span>({<span class="mu">&#x27;X&#x27;</span>: 4})</span>. Weights are AllGathered in both passes, and weight gradients are ReduceScattered in the backward pass.
     </figcaption>
   </figure>
 
   <h3 id="tp">Tensor parallelism</h3>
   <p>
-    Tensor parallelism shards the feature dimensions: the heads in attention (<span
-    class="meq">W<sub><span class="mu">qkv</span></sub>[D, H<sub>Y</sub>]</span>, <span
-    class="meq">W<sub><span class="mu">o</span></sub>[H<sub>Y</sub>, D]</span>) and the
-    hidden width in the MLP (<span class="meq">W<sub><span class="mu">in</span></sub>[D,
-    F<sub>Y</sub>]</span>, <span class="meq">W<sub><span
-    class="mu">out</span></sub>[F<sub>Y</sub>, D]</span>). Activations travel sharded on
-    <span class="meq">D</span>. Each block <strong>AllGathers on the way in and
-    ReduceScatters on the way out</strong>: the first matmul needs all of <span
-    class="meq">D</span>, so the activations are gathered; the second contracts a sharded
-    dimension, so each device is left with a partial sum <span
-    class="meq">{U<sub>Y</sub>}</span>, which the ReduceScatter resolves while re-sharding
-    for the next block.
+    Tensor parallelism shards the attention heads, <span class="meq">W<sub><span
+    class="mu">qkv</span></sub>[D, H<sub>Y</sub>]</span> and <span class="meq">W<sub><span
+    class="mu">o</span></sub>[H<sub>Y</sub>, D]</span>, and the MLP hidden dimension, <span
+    class="meq">W<sub><span class="mu">in</span></sub>[D, F<sub>Y</sub>]</span> and <span
+    class="meq">W<sub><span class="mu">out</span></sub>[F<sub>Y</sub>, D]</span>.
+    Activations are sharded along <span class="meq">D</span>. Each block starts with an
+    AllGather and ends with a ReduceScatter. The first matmul contracts over <span
+    class="meq">D</span>, so the activations are AllGathered first. The second matmul
+    contracts over the sharded <span class="meq">H</span> or <span class="meq">F</span>, so
+    each device holds a partial sum <span class="meq">{U<sub>Y</sub>}</span>. The
+    ReduceScatter sums it and shards the result along <span class="meq">D</span> for the
+    next block. The backward pass does the same in reverse.
   </p>
   <figure class="tpv-outer">
     <tpviz-figure strategy="tp"></tpviz-figure>
     <figcaption>
-      Tensor parallelism over <span class="meq"><span class="mu">Mesh</span>({<span class="mu">&#x27;Y&#x27;</span>: 4})</span>: AllGather into every block, ReduceScatter out of it, mirrored in the backward.
+      Tensor parallelism over <span class="meq"><span class="mu">Mesh</span>({<span class="mu">&#x27;Y&#x27;</span>: 4})</span>. Each block has one AllGather and one ReduceScatter in each pass.
     </figcaption>
   </figure>
 
   <h3 id="cp">Context parallelism</h3>
   <p>
     Context parallelism shards the sequence: <span class="meq"><span class="mu">In</span>[B,
-    T<sub>X</sub>, D]</span>. The MLP acts per token and never communicates. Attention needs
-    every key and value for every query, so <span class="meq">K</span> and <span
-    class="meq">V</span> are <strong>AllGathered</strong> over the sequence shards while
-    <span class="meq">Q</span> stays local; the gathered K and V are used and dropped, and
-    the backward gathers them again. In the backward every device contributes to every
-    token's <span class="meq"><span class="mu">d</span>K</span> and <span class="meq"><span
-    class="mu">d</span>V</span>, so those are partial sums that
-    <strong>ReduceScatter</strong> back over the sequence, and weight gradients AllReduce
-    over <span class="meq">X</span> as in data parallelism.
+    T<sub>X</sub>, D]</span>. The MLP acts on each token separately and needs no
+    communication. In attention, each query needs every key and value, so <span
+    class="meq">K</span> and <span class="meq">V</span> are AllGathered over <span
+    class="meq">X</span> while <span class="meq">Q</span> stays sharded. The backward pass
+    AllGathers <span class="meq">K</span> and <span class="meq">V</span> again. Each device
+    computes gradients for all keys and values, so <span class="meq"><span
+    class="mu">d</span>K</span> and <span class="meq"><span class="mu">d</span>V</span> are
+    partial sums and are ReduceScattered back over <span class="meq">T</span>. The weight
+    gradients are AllReduced over <span class="meq">X</span>, as in data parallelism.
   </p>
   <figure class="tpv-outer">
     <tpviz-figure strategy="cp"></tpviz-figure>
     <figcaption>
-      Context parallelism over <span class="meq"><span class="mu">Mesh</span>({<span class="mu">&#x27;X&#x27;</span>: 4})</span>: K/V gathers in attention, a silent MLP, sequence-scattered dK/dV in the backward.
+      Context parallelism over <span class="meq"><span class="mu">Mesh</span>({<span class="mu">&#x27;X&#x27;</span>: 4})</span>. K and V are AllGathered in attention; dK and dV are ReduceScattered in the backward pass.
     </figcaption>
   </figure>
 
   <h3 id="ep">Expert parallelism</h3>
   <p>
-    In a mixture-of-experts layer the MLP becomes <span class="meq">E</span> experts, one
-    per device, <span class="meq">W<sub><span class="mu">in</span></sub>[E<sub>Z</sub>, D,
-    F]</span>, and a router sends each token to one of them. Tokens are drawn as squares
-    colored by their expert. The <strong>AllToAll dispatch</strong> sends every device the
-    tokens for its expert; the experts run an ordinary MLP; a second
-    <strong>AllToAll</strong> sends every token home. The backward mirrors this: token
-    gradients AllToAll out and back, expert weight gradients stay local because each expert
-    owns its weights, and attention weight gradients AllReduce over the batch axis as in
-    data parallelism.
+    In a mixture-of-experts layer, the MLP is replaced by <span class="meq">E</span>
+    experts, one per device, <span class="meq">W<sub><span
+    class="mu">in</span></sub>[E<sub>Z</sub>, D, F]</span>, and a router assigns each token
+    to one expert. Tokens are drawn as squares colored by their expert. An AllToAll sends
+    each token to the device that holds its expert, each expert runs its MLP, and a second
+    AllToAll sends the tokens back. In the backward pass, the token gradients go through the
+    same two AllToAlls. The expert weight gradients need no communication, since each device
+    holds its own expert. The attention weight gradients are AllReduced over <span
+    class="meq">Z</span>, as in data parallelism.
   </p>
   <figure class="tpv-outer">
     <tpviz-figure strategy="ep"></tpviz-figure>
     <figcaption>
-      Expert parallelism over <span class="meq"><span class="mu">Mesh</span>({<span class="mu">&#x27;Z&#x27;</span>: 4})</span>: tokens sorted by expert in the AllToAll, expert MLPs, mirrored gradient AllToAlls.
+      Expert parallelism over <span class="meq"><span class="mu">Mesh</span>({<span class="mu">&#x27;Z&#x27;</span>: 4})</span>. Each MoE layer has two AllToAlls in each pass.
     </figcaption>
   </figure>
 
   <h3 id="pp">Pipeline parallelism</h3>
   <p>
-    Pipeline parallelism shards the layers: stage 0 owns layer 1, stage 1 owns layer 2, and
-    activations cross the boundary with one point-to-point send, the cheapest communication
-    here. The cost is idleness. With one batch each stage would wait on the other, so the
-    batch is split into four microbatches that follow each other through the pipe. The
-    schedule under the lanes fills as you step: the staircase is the pipe filling, the empty
-    cells are the bubble. In the backward each cell is twice as wide, because backward is
-    about twice the compute, so the bubble grows during training.
+    Pipeline parallelism shards the layers: stage 0 holds layer 1 and stage 1 holds layer 2.
+    The activations are sent from one stage to the next with a point-to-point send. With a
+    single batch, one stage is always idle, so the batch is split into four microbatches
+    that go through the stages in turn. The grid below the lanes shows which microbatch each
+    stage runs at each time step. The empty cells are idle time, called the bubble. The
+    backward pass takes about twice the compute of the forward pass, so its cells are twice
+    as wide.
   </p>
   <figure class="tpv-outer">
     <tpviz-figure strategy="pp"></tpviz-figure>
     <figcaption>
-      Pipeline parallelism, 2 stages × 4 microbatches: activations hop forward, gradients hop back, and the schedule shows who idles.
+      Pipeline parallelism with 2 stages and 4 microbatches.
     </figcaption>
   </figure>
 
   <h2 id="recipes">Examples from frontier models</h2>
   <p>
-    Training runs combine these axes. From recent reports (<a
+    Large training runs combine several of these strategies. The technical reports for <a
     href="https://arxiv.org/abs/2412.19437">DeepSeek-V3</a>, <a
     href="https://arxiv.org/abs/2507.20534">Kimi K2</a>, <a
     href="https://arxiv.org/abs/2507.01006">GLM-4.5V</a>, <a
     href="https://arxiv.org/abs/2406.11704">Nemotron-4</a>, <a
     href="https://arxiv.org/abs/2504.03624">Nemotron-H</a>, <a
     href="https://research.nvidia.com/labs/nemotron/files/NVIDIA-Nemotron-3-Nano-Technical-
-    Report.pdf">Nemotron 3</a>, <a href="https://arxiv.org/abs/2511.21631">Qwen3-VL</a>, <a
-    href="https://arxiv.org/abs/2407.21783">Llama 3</a>) the recipes fall into three
-    families. The figures use two devices per axis so the grids stay readable; the reported
-    degrees are in the text.
+    Report.pdf">Nemotron 3</a>, <a href="https://arxiv.org/abs/2511.21631">Qwen3-VL</a> and
+    <a href="https://arxiv.org/abs/2407.21783">Llama 3</a> use three combinations. The
+    figures use two devices per axis; the sizes used in the reports are given in the text.
   </p>
   <p>
-    The canvas changes here. Each pipeline stage is a grid of devices, arranged so that
-    every mesh axis is a fixed direction: an FSDP partner is two rows away, a tensor-
-    parallel partner is the next column, and so on. Every collective flies along exactly one
-    axis, wrapped in that axis's color, with a badge under the grid and a tag in the program
-    naming the parallelism responsible. The tally under the step bar counts collectives per
-    axis.
+    In these figures, each pipeline stage is a grid of devices. The row and column labels
+    give each device's coordinate along each mesh axis. Each collective runs over one axis
+    and is drawn in that axis's color, and the label under the grid names the axis and the
+    strategy. The row under the step bar counts the collectives on each axis.
   </p>
 
   <h3 id="dense4d">Dense models: Llama 3</h3>
   <p>
-    <strong>FSDP × TP × CP × PP.</strong> Llama 3 405B trained with TP 8, PP 16 and FSDP 64
-    at 8K tokens, then TP 8, <strong>CP 16</strong>, PP 16 and FSDP 8 at 128K: context
-    parallelism is turned on only when sequences get long. Axes are ordered by bandwidth, TP
-    within a server and data parallelism across the cluster. Nemotron-4 340B (TP 8 × PP 12 ×
-    DP) and Nemotron-H (TP 8 × DP 768, no PP) are the same family without the context axis.
-    Here <span class="meq"><span class="mu">Mesh</span>({<span
+    <strong>FSDP × TP × CP × PP.</strong> Llama 3 405B used TP 8, PP 16 and FSDP 64 for
+    8K-token sequences, and TP 8, CP 16, PP 16 and FSDP 8 for 128K-token sequences. TP is
+    placed within a server, where bandwidth is highest, and data parallelism across servers.
+    Nemotron-4 340B used TP 8, PP 12 and data parallelism; Nemotron-H used TP 8 and 768-way
+    data parallelism. The figure uses <span class="meq"><span class="mu">Mesh</span>({<span
     class="mu">&#x27;X&#x27;</span>: 2, <span class="mu">&#x27;Y&#x27;</span>: 2, <span
     class="mu">&#x27;C&#x27;</span>: 2, <span class="mu">&#x27;stage&#x27;</span>:
-    2})</span> and <span class="meq"><span class="mu">In</span>[B<sub>X</sub>,
-    T<sub>C</sub>, D<sub>Y</sub>]</span>. Every matmul opens with FSDP's weight gather and
-    TP's activation gather; CP speaks only in attention; the pipeline is one send per
-    direction.
+    2})</span> with <span class="meq"><span class="mu">In</span>[B<sub>X</sub>,
+    T<sub>C</sub>, D<sub>Y</sub>]</span>. Each matmul has an FSDP AllGather of the weight
+    and a TP AllGather of the activations. CP adds the K and V AllGathers in attention, and
+    PP adds one send in each direction.
   </p>
   <figure class="tpv-outer">
     <tpviz-figure strategy="dense4d"></tpviz-figure>
     <figcaption>
-      Dense 4D over <span class="meq"><span class="mu">Mesh</span>({<span class="mu">&#x27;X&#x27;</span>: 2, <span class="mu">&#x27;Y&#x27;</span>: 2, <span class="mu">&#x27;C&#x27;</span>: 2, <span class="mu">&#x27;stage&#x27;</span>: 2})</span>, Llama 3 style: FSDP × TP × CP × PP on 16 devices.
+      FSDP × TP × CP × PP over <span class="meq"><span class="mu">Mesh</span>({<span class="mu">&#x27;X&#x27;</span>: 2, <span class="mu">&#x27;Y&#x27;</span>: 2, <span class="mu">&#x27;C&#x27;</span>: 2, <span class="mu">&#x27;stage&#x27;</span>: 2})</span>, 16 devices.
     </figcaption>
   </figure>
 
   <h3 id="moe4d">Open MoE models: DeepSeek and Kimi</h3>
   <p>
-    <strong>EP × CP × PP × ZeRO-1, and no TP.</strong> DeepSeek-V3 trained with PP 16
-    (DualPipe), EP 64 across 8 nodes and ZeRO-1 data parallelism, "without costly tensor
-    parallelism"; Kimi K2 with PP 16, EP 16 and ZeRO-1. Neither reports context parallelism
-    (V3 reached 128K with YaRN), but the long-context work that followed does: GLM-4.5V adds
-    CP 4 for its long-context stage, and <a
+    <strong>EP × CP × PP × ZeRO-1, without TP.</strong> DeepSeek-V3 used PP 16, EP 64 across
+    8 nodes and ZeRO-1, and no tensor parallelism. Kimi K2 used PP 16, EP 16 and ZeRO-1.
+    Neither report uses context parallelism; DeepSeek-V3 extends its context to 128K with
+    YaRN. GLM-4.5V adds CP 4 for its long-context stage, and <a
     href="https://arxiv.org/abs/2606.19348">DeepSeek-V4</a> and <a
-    href="https://arxiv.org/abs/2607.24653">Kimi K3</a> each describe context-parallel
-    attention for million-token training. Here <span class="meq"><span
+    href="https://arxiv.org/abs/2607.24653">Kimi K3</a> both use context parallelism for
+    long-context training. The figure uses <span class="meq"><span
     class="mu">Mesh</span>({<span class="mu">&#x27;X&#x27;</span>: 2, <span
     class="mu">&#x27;C&#x27;</span>: 2, <span class="mu">&#x27;Z&#x27;</span>: 2, <span
-    class="mu">&#x27;stage&#x27;</span>: 2})</span> and <span class="meq"><span
-    class="mu">In</span>[B<sub>XZ</sub>, T<sub>C</sub>, D]</span>: the batch is split over
-    the data axis and the expert axis, since outside the MoE block the expert axis is more
-    data parallelism, and the sequence over <span class="meq">C</span>. The forward has no
-    weight gathers at all: K and V gather over <span class="meq">C</span>, the <span
-    class="meq"><span class="mu">AllToAll</span><sub>Z</sub></span> pair runs per MoE layer,
-    and the activations hop between stages. In the backward an attention weight gradient
-    scatters over <span class="meq">X</span> (ZeRO-1) and sums over <span
-    class="meq">Z</span> and <span class="meq">C</span>; an expert weight gradient scatters
-    over <span class="meq">X</span> and sums over <span class="meq">C</span> only, because
-    each expert owns its weights. Then each device steps on its shard and the updated
-    weights gather back.
+    class="mu">&#x27;stage&#x27;</span>: 2})</span> with <span class="meq"><span
+    class="mu">In</span>[B<sub>XZ</sub>, T<sub>C</sub>, D]</span>. The batch is sharded over
+    both <span class="meq">X</span> and <span class="meq">Z</span>, since outside the MoE
+    layers the expert axis is another data axis. The forward pass has no weight AllGathers.
+    It has the K and V AllGathers over <span class="meq">C</span>, two AllToAlls over <span
+    class="meq">Z</span> per MoE layer, and the send between stages. In the backward pass,
+    each attention weight gradient is ReduceScattered over <span class="meq">X</span> and
+    AllReduced over <span class="meq">Z</span> and <span class="meq">C</span>. Each expert
+    weight gradient is ReduceScattered over <span class="meq">X</span> and AllReduced over
+    <span class="meq">C</span> only, since each expert is held at a single <span
+    class="meq">Z</span> coordinate.
   </p>
   <figure class="tpv-outer">
     <tpviz-figure strategy="moe4d"></tpviz-figure>
     <figcaption>
-      MoE 4D over <span class="meq"><span class="mu">Mesh</span>({<span class="mu">&#x27;X&#x27;</span>: 2, <span class="mu">&#x27;C&#x27;</span>: 2, <span class="mu">&#x27;Z&#x27;</span>: 2, <span class="mu">&#x27;stage&#x27;</span>: 2})</span>, DeepSeek / Kimi style: EP × CP × PP × ZeRO-1, no tensor parallelism, 16 devices.
+      EP × CP × PP × ZeRO-1 over <span class="meq"><span class="mu">Mesh</span>({<span class="mu">&#x27;X&#x27;</span>: 2, <span class="mu">&#x27;C&#x27;</span>: 2, <span class="mu">&#x27;Z&#x27;</span>: 2, <span class="mu">&#x27;stage&#x27;</span>: 2})</span>, 16 devices.
     </figcaption>
   </figure>
 
-  <h3 id="5d">Everything at once: Nemotron 3 and Qwen3-VL</h3>
+  <h3 id="5d">All five: Nemotron 3 and Qwen3-VL</h3>
   <p>
-    <strong>FSDP × TP × CP × EP × PP.</strong> Nemotron 3 Nano's long-context phase ran CP 8
-    × TP 8 × EP 8 × PP 4 (Nemotron 3 Ultra pushes EP to 128), and Qwen3-VL lists TP, PP, CP,
-    EP and ZeRO-1 DP on up to 10,000 GPUs. Here, two of everything: 32 devices, <span
+    <strong>FSDP × TP × CP × EP × PP.</strong> The long-context stage of Nemotron 3 Nano
+    used CP 8, TP 8, EP 8 and PP 4, and Nemotron 3 Ultra used EP 128. Qwen3-VL uses TP, PP,
+    CP, EP and ZeRO-1 on up to 10,000 GPUs. The figure uses 32 devices, <span
     class="meq"><span class="mu">Mesh</span>({<span class="mu">&#x27;X&#x27;</span>: 2,
     <span class="mu">&#x27;Y&#x27;</span>: 2, <span class="mu">&#x27;C&#x27;</span>: 2,
     <span class="mu">&#x27;Z&#x27;</span>: 2, <span class="mu">&#x27;stage&#x27;</span>:
-    2})</span>, <span class="meq"><span class="mu">In</span>[B<sub>XZ</sub>, T<sub>C</sub>,
-    D<sub>Y</sub>]</span>. Each stage is a 4 × 4 grid, rows <span class="meq">X</span> then
-    <span class="meq">C</span>, columns <span class="meq">Z</span> then <span
-    class="meq">Y</span>. The tally is the summary: FSDP and TP do most of the talking, CP
-    speaks only in attention, EP is two AllToAlls per MoE layer, PP one send per direction.
-    In the backward a weight gradient is summed over every axis that split the tokens, <span
-    class="meq">X</span>, <span class="meq">Z</span> and <span class="meq">C</span>, so one
-    gradient takes three collectives to settle.
+    2})</span>, with <span class="meq"><span class="mu">In</span>[B<sub>XZ</sub>,
+    T<sub>C</sub>, D<sub>Y</sub>]</span>. Each stage is a 4 × 4 grid with rows <span
+    class="meq">X</span> and <span class="meq">C</span> and columns <span
+    class="meq">Z</span> and <span class="meq">Y</span>. Most collectives are the FSDP and
+    TP AllGathers and ReduceScatters. CP communicates only in attention, EP adds two
+    AllToAlls per MoE layer, and PP adds one send in each direction. In the backward pass,
+    each attention weight gradient is summed over <span class="meq">X</span>, <span
+    class="meq">Z</span> and <span class="meq">C</span>, the three axes that shard the
+    tokens, which takes three collectives.
   </p>
   <figure class="tpv-outer">
     <tpviz-figure strategy="5d"></tpviz-figure>
     <figcaption>
-      Everything at once over <span class="meq"><span class="mu">Mesh</span>({<span class="mu">&#x27;X&#x27;</span>: 2, <span class="mu">&#x27;Y&#x27;</span>: 2, <span class="mu">&#x27;C&#x27;</span>: 2, <span class="mu">&#x27;Z&#x27;</span>: 2, <span class="mu">&#x27;stage&#x27;</span>: 2})</span>, Nemotron 3 / Qwen3-VL style: 32 devices, every collective colored by the axis that causes it.
+      FSDP × TP × CP × EP × PP over <span class="meq"><span class="mu">Mesh</span>({<span class="mu">&#x27;X&#x27;</span>: 2, <span class="mu">&#x27;Y&#x27;</span>: 2, <span class="mu">&#x27;C&#x27;</span>: 2, <span class="mu">&#x27;Z&#x27;</span>: 2, <span class="mu">&#x27;stage&#x27;</span>: 2})</span>, 32 devices.
     </figcaption>
   </figure>
 
   <footer>
     <p class="muted">
       Notation and shardings follow the
-      <a href="https://jax-ml.github.io/scaling-book/">JAX scaling book</a>.
-      Figures are recorded from the same source of truth as the companion videos;
-      collective sequences are pinned by tests against the book's four sharded-matmul
-      cases.
+      <a href="https://jax-ml.github.io/scaling-book/">JAX scaling book</a>. The collectives in
+      every figure are derived from the shardings by the scaling book's rules for sharded
+      matmuls, and tests check them.
     </p>
   </footer>
 </article>

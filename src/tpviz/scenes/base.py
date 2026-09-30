@@ -74,22 +74,22 @@ NEXT_ANCHOR = {
 def default_caption(step: Step) -> str | None:
     if isinstance(step, AllGatherStep):
         if step.jit:
-            return "Gather the full weight just in time — use it, then discard it"
+            return "AllGather the weight before the matmul; it is freed after."
         if step.src.kind == "kv":
-            return "Attention needs every token: gather K and V across shards"
+            return "AllGather K and V over the sequence shards."
         if step.src.kind == "grad":
-            return "Gather the sharded gradient before the matmul"
-        return "Gather the sharded activations before the matmul"
+            return "AllGather the gradient before the matmul."
+        return "AllGather the activations before the matmul."
     if isinstance(step, ReduceScatterStep):
-        return "Unreduced partial sums resolve — each device keeps one slice"
+        return "Sum the partial results; each device keeps one shard."
     if isinstance(step, AllReduceStep):
-        return "Unreduced partial sums resolve everywhere"
+        return "Sum the partial results on every device."
     if isinstance(step, AllToAllStep):
         if step.direction == "dispatch":
-            return "AllToAll: every token travels to its expert's device"
-        return "AllToAll: processed tokens return home"
+            return "Send each token to the device that holds its expert."
+        return "Send each token back to its original device."
     if isinstance(step, RouteStep):
-        return "The router assigns each token to an expert"
+        return "The router assigns each token to an expert."
     return None
 
 
