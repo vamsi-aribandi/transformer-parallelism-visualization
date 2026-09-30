@@ -959,7 +959,7 @@ class Dense4DScene(FiveDScene):
     cfg = configs.DENSE4D
 
 
-class MoE3DScene(FiveDScene):
-    """DeepSeek-V3 / Kimi K2 style: EP x PP x ZeRO-1 data parallelism, no TP (8 devices)."""
+class MoE4DScene(FiveDScene):
+    """DeepSeek / Kimi style: EP x CP x PP x ZeRO-1 data parallelism, no TP (16 devices)."""
 
-    cfg = configs.MOE3D
+    cfg = configs.MOE4D

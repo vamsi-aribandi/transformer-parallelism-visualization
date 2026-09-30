@@ -28,7 +28,7 @@ STRATEGY_LABEL = {
     "dp": "Data Parallelism", "fsdp": "FSDP (ZeRO-3)", "tp": "Tensor Parallelism",
     "cp": "Context Parallelism", "pp": "Pipeline Parallelism", "ep": "Expert Parallelism",
     "5d": "5D Parallelism", "zero1": "ZeRO-1 Data Parallelism",
-    "dense4d": "Dense 4D (Llama 3 style)", "moe3d": "MoE 3D (DeepSeek-V3 / Kimi K2 style)",
+    "dense4d": "Dense 4D (Llama 3 style)", "moe4d": "MoE 4D (DeepSeek / Kimi style)",
 }
 
 
@@ -61,11 +61,11 @@ def scene_registry() -> dict[str, tuple[type, object, bool]]:
         cfg = getattr(configs, short.upper())
         reg[f"{short}_fwd"] = (fwd_cls, cfg, False)
         reg[f"{short}_train"] = (train_cls, cfg, True)
-    from tpviz.scenes.five_d import Dense4DScene, FiveDScene, MoE3DScene
+    from tpviz.scenes.five_d import Dense4DScene, FiveDScene, MoE4DScene
 
     reg["5d_train"] = (FiveDScene, configs.FIVE_D, True)
     reg["dense4d_train"] = (Dense4DScene, configs.DENSE4D, True)
-    reg["moe3d_train"] = (MoE3DScene, configs.MOE3D, True)
+    reg["moe4d_train"] = (MoE4DScene, configs.MOE4D, True)
     return reg
 
 

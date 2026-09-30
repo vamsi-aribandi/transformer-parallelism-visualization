@@ -58,28 +58,27 @@ def test_dense4d_is_llama3_style():
     }
 
 
-def test_moe3d_is_deepseek_style_no_tensor_parallelism():
-    cfg = configs.MOE3D
-    assert "Y" not in cfg.mesh.axes and cfg.mesh.n_devices == 8
+def test_moe4d_is_deepseek_style_no_tensor_parallelism():
+    cfg = configs.MOE4D
+    assert "Y" not in cfg.mesh.axes and cfg.mesh.n_devices == 16
     steps = train_steps(cfg)
     fwd = [s for s in steps if isinstance(s, (CollectiveStep, P2PSendStep)) and not s.backward]
-    # forward: only the AllToAll pairs and the stage hop — no gathers at all
-    assert count_collectives(fwd) == {"AllToAll": 4, "P2P": 1}
-    dispatch = [s for s in fwd if isinstance(s, CollectiveStep)][0]
-    assert dispatch.out.sharding == {"E": "Z", "S": "X"}  # tokens stay split over the DP axis
+    # forward: no weight or activation gathers except CP's K/V, the AllToAll pairs, the stage hop
+    assert count_collectives(fwd) == {"AllGather": 4, "AllToAll": 4, "P2P": 1}
+    assert all(s.src.kind == "kv" and s.axis == "C" for s in fwd if isinstance(s, AllGatherStep))
+    dispatch = [s for s in fwd if isinstance(s, CollectiveStep) and s.op == "AllToAll"][0]
+    assert dispatch.out.sharding == {"E": "Z", "S": "XC"}  # tokens keep their data and context split
     bwd = [s for s in steps if s.backward]
-    # attention weight grads: ZeRO-1 scatter over X + sum over the expert axis;
-    # expert weight grads: scatter over X only
+    # attention weight grads: ZeRO-1 scatter over X, then sums over the expert and context axes;
+    # expert weight grads: scatter over X, sum over C only (each expert owns its weights)
     attn = [(type(s).__name__, s.axis) for s in bwd if isinstance(s, CollectiveStep)
             and s.layer == 2 and s.src.name == "dW_qkv"]
-    assert attn == [("ReduceScatterStep", "X"), ("AllReduceStep", "Z")]
+    assert attn == [("ReduceScatterStep", "X"), ("AllReduceStep", "Z"), ("AllReduceStep", "C")]
     exp = [(type(s).__name__, s.axis) for s in bwd if isinstance(s, CollectiveStep)
            and s.layer == 2 and s.src.name == "dW_in"]
-    assert exp == [("ReduceScatterStep", "X")]
-    # ZeRO-1 update: every weight (attention and expert) steps on its shard and gathers
+    assert exp == [("ReduceScatterStep", "X"), ("AllReduceStep", "C")]
     upd = [s for s in bwd if isinstance(s, OptimizerStep)]
     assert [u.weight.name for u in upd if u.layer == 1] == ["W_qkv", "W_o", "W_in", "W_out"]
-    assert all(u.out.axes_of(next(d for d in u.out.dims if "X" in u.out.axes_of(d))) == "X" for u in upd)
     assert count_collectives(bwd) == {
-        "AllToAll": 4, "ReduceScatter": 8, "AllReduce": 4, "AllGather": 8, "P2P": 1,
+        "AllToAll": 4, "AllGather": 12, "ReduceScatter": 12, "AllReduce": 12, "P2P": 1,
     }

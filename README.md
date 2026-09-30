@@ -21,8 +21,8 @@ MLP becomes a routed MoE for expert parallelism):
 ## Recipes from frontier models
 
 Three multi-axis configs play on the mesh-grid canvas (`scenes/five_d.py`):
-`dense4d` (Llama 3 style FSDP × TP × CP × PP, 16 devices), `moe3d`
-(DeepSeek-V3 / Kimi K2 style EP × PP × ZeRO-1, no TP, 8 devices) and `5d`
+`dense4d` (Llama 3 style FSDP × TP × CP × PP, 16 devices), `moe4d`
+(DeepSeek / Kimi style EP × CP × PP × ZeRO-1, no TP, 16 devices) and `5d`
 (Nemotron 3 / Qwen3-VL style, everything, 32 devices). `tests/test_recipes.py`
 pins the first two.
 

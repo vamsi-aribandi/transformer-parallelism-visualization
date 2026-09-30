@@ -129,18 +129,20 @@ DENSE4D = StrategyConfig(
     axis_roles={"X": "FSDP", "Y": "TP", "C": "CP", "stage": "PP"},
 )
 
-# Open-MoE 3D (DeepSeek-V3: PP 16 x EP 64 x ZeRO-1 DP, no TP; Kimi K2: PP 16 x EP 16 x ZeRO-1).
-MOE3D = StrategyConfig(
-    name="MoE 3D Parallelism",
-    short="moe3d",
-    tagline="DeepSeek-V3 / Kimi K2 style: EP × PP × ZeRO-1 data parallelism, no TP.",
-    mesh=Mesh({"X": 2, "Z": 2, "stage": 2}),
-    act_sharding={"B": "XZ"},
+# Open-MoE 4D (DeepSeek-V3: PP 16 x EP 64 x ZeRO-1, no TP; Kimi K2: PP 16 x EP 16 x ZeRO-1;
+# GLM-4.5V adds CP 4 for long context; DeepSeek-V4 / Kimi K3 describe context-parallel attention).
+MOE4D = StrategyConfig(
+    name="MoE 4D Parallelism",
+    short="moe4d",
+    tagline="DeepSeek / Kimi style: EP × CP × PP × ZeRO-1 data parallelism, no TP.",
+    mesh=Mesh({"X": 2, "C": 2, "Z": 2, "stage": 2}),
+    act_sharding={"B": "XZ", "T": "C"},
     wt_sharding={},
+    kv_context_axis="C",
     pipeline=PipelineConfig(n_stages=2, n_microbatches=1, composed=True),
     moe=MoEConfig(n_experts=2, axis="Z"),
-    axis_roles={"X": "ZeRO-1", "Z": "EP", "stage": "PP"},
+    axis_roles={"X": "ZeRO-1", "C": "CP", "Z": "EP", "stage": "PP"},
     zero1_axis="X",
 )
 
-ALL = {c.short: c for c in (DP, ZERO1, FSDP, TP, CP, PP, EP, DENSE4D, MOE3D, FIVE_D)}
+ALL = {c.short: c for c in (DP, ZERO1, FSDP, TP, CP, PP, EP, DENSE4D, MOE4D, FIVE_D)}

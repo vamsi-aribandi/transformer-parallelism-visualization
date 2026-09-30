@@ -42,7 +42,7 @@ lq-train-all:
 
 # ---- interactive web player ----
 web:
-	uv run python -m tpviz.web.export --only dp_train,zero1_train,fsdp_train,tp_train,cp_train,ep_train,pp_train,dense4d_train,moe3d_train,5d_train
+	uv run python -m tpviz.web.export --only dp_train,zero1_train,fsdp_train,tp_train,cp_train,ep_train,pp_train,dense4d_train,moe4d_train,5d_train
 
 # re-record ONE timeline and merge it into the existing dist/data.json
 # usage: make web-one T=5d_train
@@ -56,9 +56,14 @@ web-all:
 web-page:
 	uv run python -m tpviz.web.export --page-only
 
+# regenerate the article prose (web/article.html body + the site's post) from
+# scripts/build_prose.py — the single source for all article text
+prose:
+	uv run python scripts/build_prose.py
+
 # sync the embeddable figure assets into the personal site's blog post
 SITE = ../vamsi-aribandi.github.io
-site: web-page
+site: web-page prose
 	cp web/style.css   $(SITE)/static/tpviz/tpviz.css
 	cp web/tpviz.js    $(SITE)/static/tpviz/tpviz.js
 	cp web/dist/data.js $(SITE)/static/tpviz/data.js
@@ -83,4 +88,4 @@ hq-5d:
 	uv run manim render -qh --disable_caching src/tpviz/scenes/five_d.py FiveDScene
 	cp media/videos/five_d/1080p60/FiveDScene.mp4 renders/5d.mp4
 
-.PHONY: web web-one web-all web-page site web-qa lq-5d hq-5d
+.PHONY: web web-one web-all web-page prose site web-qa lq-5d hq-5d
