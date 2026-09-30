@@ -21,6 +21,8 @@ box rects (never cached at construction).
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
 from manim import Rectangle, RoundedRectangle, Text, VGroup
 
@@ -35,8 +37,24 @@ WEIGHT_SLOTS = (0.36, 0.64)
 WEIGHT_TRACK = 0.25  # fraction of box height from the top
 ACT_TRACK = 0.69
 
-ROW_AXES = ("X", "C")  # outer, inner
+ROW_AXES = ("X", "C")  # outer, inner — whichever of them the mesh has
 COL_AXES = ("Z", "Y")
+
+
+def _cell_offsets(sizes: list[int], cell: float, inner_gap: float, outer_gap: float) -> list[float]:
+    """Start offset of each cell along one direction for nested axes (outer
+    first): an outer-coordinate change opens the wide gap, otherwise the
+    narrow one. A single axis uses the wide gap."""
+    n = 1
+    for k in sizes:
+        n *= k
+    out, pos = [], 0.0
+    inner = sizes[-1] if len(sizes) > 1 else 1
+    for i in range(n):
+        out.append(pos)
+        if i + 1 < n:
+            pos += cell + (inner_gap if (i + 1) % inner else outer_gap)
+    return out
 
 
 class MeshGrid(VGroup):
@@ -59,36 +77,52 @@ class MeshGrid(VGroup):
         m = self.mesh.axes
         self.n_stages = m.get("stage", 1)
         self.top, self.bottom = top, bottom
+        self.row_axes = [a for a in ROW_AXES if a in m]
+        self.col_axes = [a for a in COL_AXES if a in m]
+        row_sizes = [m[a] for a in self.row_axes] or [1]
+        col_sizes = [m[a] for a in self.col_axes] or [1]
+        n_rows = math.prod(row_sizes)
+        n_cols = math.prod(col_sizes)
 
-        n_rows = m[ROW_AXES[0]] * m[ROW_AXES[1]]
-        n_cols = m[COL_AXES[0]] * m[COL_AXES[1]]
+        def gaps_total(sizes: list[int]) -> float:
+            n = math.prod(sizes)
+            inner = sizes[-1] if len(sizes) > 1 else 1
+            return sum(inner_gap if (i + 1) % inner else outer_gap for i in range(n - 1))
+
         grid_w = ((x_right - x_left) - 2 * margin_w - (self.n_stages - 1) * stage_gap) / self.n_stages
-        box_w = (grid_w - (m[COL_AXES[0]] - 1) * outer_gap
-                 - m[COL_AXES[0]] * (m[COL_AXES[1]] - 1) * inner_gap) / n_cols
-        box_h = ((top - bottom) - (m[ROW_AXES[0]] - 1) * outer_gap
-                 - m[ROW_AXES[0]] * (m[ROW_AXES[1]] - 1) * inner_gap) / n_rows
+        box_w = (grid_w - gaps_total(col_sizes)) / n_cols
+        box_h = ((top - bottom) - gaps_total(row_sizes)) / n_rows
         self.box_w, self.box_h = box_w, box_h
         self.grid_w = grid_w
+        col_off = _cell_offsets(col_sizes, box_w, inner_gap, outer_gap)
+        row_off = _cell_offsets(row_sizes, box_h, inner_gap, outer_gap)
 
-        def offsets(n_outer: int, n_inner: int, size: float) -> list[float]:
-            """Start offset of each (outer, inner) cell along one direction."""
+        def cell_index(coords: dict[str, int], axes: list[str]) -> int:
+            idx = 0
+            for a in axes:
+                idx = idx * m[a] + coords[a]
+            return idx
+
+        def cell_coords(idx: int, axes: list[str]) -> list[tuple[str, int]]:
             out = []
-            pos = 0.0
-            for o in range(n_outer):
-                for i in range(n_inner):
-                    out.append(pos)
-                    pos += size + (inner_gap if i < n_inner - 1 else 0.0)
-                pos += outer_gap
-            return out
+            for a in reversed(axes):
+                out.append((a, idx % m[a]))
+                idx //= m[a]
+            return list(reversed(out))
 
-        col_off = offsets(m[COL_AXES[0]], m[COL_AXES[1]], box_w)
-        row_off = offsets(m[ROW_AXES[0]], m[ROW_AXES[1]], box_h)
+        def label_row(items, cx, cy):
+            n = len(items)
+            for k, (axis, val) in enumerate(items):
+                t = Text(f"{axis}{val}", font_size=11, color=style.AXIS_HUES[axis], weight="BOLD")
+                t.move_to(np.array([cx + (k - (n - 1) / 2) * 0.36, cy, 0.0]))
+                t.set_z_index(style.Z_LABEL)
+                self.margin_labels[axis].append(t)
+                self.add(t)
 
         self.grid_x0: list[float] = []
         self.boxes: dict[int, RoundedRectangle] = {}
         self.stage_frames: list[Rectangle] = []
         self.margin_labels: dict[str, list[Text]] = {a: [] for a in ROW_AXES + COL_AXES}
-        self.col_labels: list[Text] = []
         for s in range(self.n_stages):
             gx0 = x_left + margin_w + s * (grid_w + stage_gap)
             self.grid_x0.append(gx0)
@@ -102,8 +136,8 @@ class MeshGrid(VGroup):
                 c = self.mesh.coords(dev)
                 if c.get("stage", 0) != s:
                     continue
-                r = c[ROW_AXES[0]] * m[ROW_AXES[1]] + c[ROW_AXES[1]]
-                k = c[COL_AXES[0]] * m[COL_AXES[1]] + c[COL_AXES[1]]
+                r = cell_index(c, self.row_axes)
+                k = cell_index(c, self.col_axes)
                 box = RoundedRectangle(corner_radius=0.06, width=box_w, height=box_h,
                                        stroke_width=1.4)
                 box.set_fill(style.DEVICE_BOX_FILL, opacity=1.0)
@@ -112,27 +146,16 @@ class MeshGrid(VGroup):
                 box.set_z_index(style.Z_DEVICE)
                 self.boxes[dev] = box
                 self.add(box)
-            # column labels above the grid: "Z0  Y1" per column, axis-colored
-            for k in range(n_cols):
-                cx = gx0 + col_off[k] + box_w / 2
-                zo, yi = divmod(k, m[COL_AXES[1]])
-                for dx, axis, val in ((-0.19, COL_AXES[0], zo), (0.19, COL_AXES[1], yi)):
-                    t = Text(f"{axis}{val}", font_size=11, color=style.AXIS_HUES[axis], weight="BOLD")
-                    t.move_to(np.array([cx + dx, top + 0.14, 0.0]))
-                    t.set_z_index(style.Z_LABEL)
-                    self.margin_labels[axis].append(t)
-                    self.add(t)
-        # row labels in the outer margins: "X0  C1" per row
-        for r in range(n_rows):
-            cy = top - row_off[r] - box_h / 2
-            xo, ci = divmod(r, m[ROW_AXES[1]])
-            for mx in (x_left + margin_w / 2, x_right - margin_w / 2):
-                for dx, axis, val in ((-0.16, ROW_AXES[0], xo), (0.16, ROW_AXES[1], ci)):
-                    t = Text(f"{axis}{val}", font_size=11, color=style.AXIS_HUES[axis], weight="BOLD")
-                    t.move_to(np.array([mx + dx, cy, 0.0]))
-                    t.set_z_index(style.Z_LABEL)
-                    self.margin_labels[axis].append(t)
-                    self.add(t)
+            # column labels above the grid, axis-colored ("Z0  Y1")
+            if self.col_axes:
+                for k in range(n_cols):
+                    label_row(cell_coords(k, self.col_axes), gx0 + col_off[k] + box_w / 2, top + 0.14)
+        # row labels in the outer margins ("X0  C1")
+        if self.row_axes:
+            for r in range(n_rows):
+                cy = top - row_off[r] - box_h / 2
+                for mx in (x_left + margin_w / 2, x_right - margin_w / 2):
+                    label_row(cell_coords(r, self.row_axes), mx, cy)
 
         # per-stage header titles (swapped live as the phase changes)
         self.stage_titles: list[Text] = []

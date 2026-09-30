@@ -16,6 +16,15 @@ MLP becomes a routed MoE for expert parallelism):
 | `cp` | Context parallelism — `In[B, T_X, D]` | AllGather K, V in attention; MLP silent |
 | `pp` | Pipeline parallelism — stages own layers, 4 microbatches | P2P activation sends (Gantt + bubble shown) |
 | `ep` | Expert parallelism (MoE) — `W[E_Z, D, F]` | AllToAll dispatch + combine |
+| `zero1` | ZeRO-1 — replicated weights, sharded optimizer | none forward; backward ReduceScatter → sharded step → AllGather |
+
+## Recipes from frontier models
+
+Three multi-axis configs play on the mesh-grid canvas (`scenes/five_d.py`):
+`dense4d` (Llama 3 style FSDP × TP × CP × PP, 16 devices), `moe3d`
+(DeepSeek-V3 / Kimi K2 style EP × PP × ZeRO-1, no TP, 8 devices) and `5d`
+(Nemotron 3 / Qwen3-VL style, everything, 32 devices). `tests/test_recipes.py`
+pins the first two.
 
 ## The 5D combination
 

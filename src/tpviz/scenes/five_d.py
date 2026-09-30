@@ -52,6 +52,7 @@ from tpviz.core.steps import (
     GradInitStep,
     MatMulStep,
     MergeQKVStep,
+    OptimizerStep,
     P2PSendStep,
     ReduceScatterStep,
     RouteStep,
@@ -97,6 +98,8 @@ def attribution_caption(cfg: StrategyConfig, step: Step) -> str | None:
     role = cfg.axis_roles.get(ax, ax)
     who = f"{AXIS_LONG.get(ax, role)} (axis {ax})"
     if isinstance(step, AllGatherStep):
+        if step.src.kind == "weight" and step.caption:
+            return step.caption  # ZeRO-1's post-update gather explains itself
         if step.src.kind == "weight":
             return (f"{who}: re-gather the weight for the backward matmul — it was discarded after the forward"
                     if step.backward else
@@ -118,15 +121,17 @@ def attribution_caption(cfg: StrategyConfig, step: Step) -> str | None:
         return f"{who}: the partial sums resolve — each device keeps its slice of D"
     if isinstance(step, AllReduceStep):
         if ax == "Z":
-            return "Outside the MoE block the expert axis Z is plain data parallelism — attention weight gradients AllReduce over it"
+            return "Outside the MoE block the expert axis Z is plain data parallelism — attention weight gradients sum over it"
         if ax == "C":
             return "The context axis C replicates every weight — its gradient contributions must be summed"
         return f"{who}: unreduced partial sums resolve everywhere"
     if isinstance(step, AllToAllStep):
         if step.direction == "dispatch":
+            keep = step.out.axes_of("S")
+            tail = (f" — S stays sharded over {' and '.join(keep)}" if keep else "")
             return (f"{who}: token gradients travel to the expert that processed them"
                     if step.backward else
-                    f"{who}: each token travels to the device holding its expert — S stays sharded over X and C")
+                    f"{who}: each token travels to the device holding its expert{tail}")
         return (f"{who}: token gradients return home" if step.backward
                 else f"{who}: processed tokens return home to their batch/sequence positions")
     return step.caption
@@ -410,7 +415,7 @@ class FiveDScene(Scene):
             self.play(*anims, run_time=self.rt(0.3))
             return
 
-        stage = stage_of(self.cfg, layer)
+        stage = stage_of(self.cfg, layer) or 0
         prev_stage = self.shown_stage
         self.active_stage = self.shown_stage = stage
         title = f"Stage {stage} · Layer {layer} · {PHASE_LABEL.get(phase, phase)}"
@@ -468,7 +473,7 @@ class FiveDScene(Scene):
             anims.append(self.set_header_tex(stage, self.station_tex(phase)))
         # live activations settle at the station's entry (forward) / exit (backward)
         for name, per_dev in self.acts.items():
-            if name.startswith("dW"):
+            if name.startswith("dW") or isinstance(step, OptimizerStep):
                 continue
             for dev, g in per_dev.items():
                 anims.append(g.animate.move_to(self.grid.anchor(dev, "exit" if bwd else "entry")))
@@ -653,7 +658,8 @@ class FiveDScene(Scene):
         if step.src.kind == "weight":
             slot = 0 if step.src.name in ("W_qkv", "W_in") else 1
             shards = self.weights[step.src.name]
-            self.pending_restore[step.src.name] = {d: s.copy() for d, s in shards.items()}
+            if step.jit:
+                self.pending_restore[step.src.name] = {d: s.copy() for d, s in shards.items()}
             results = {}
             for dev in shards:
                 vis = VGroup(WeightRect(step.out, self.cfg.mesh, device=dev, scale=FIXTURE_SCALE))
@@ -791,6 +797,32 @@ class FiveDScene(Scene):
         self.acts[step.out.name] = outs
         self.comm_bump()
 
+    def handle_OptimizerStep(self, step: OptimizerStep):
+        """ZeRO-1: each device's gradient shard updates ITS slice of the
+        weight — the replicated fixture becomes a sharded one."""
+        name = step.weight.name
+        slot = 0 if name in ("W_qkv", "W_in") else 1
+        self.op_intro(step, color=style.GRAD_STROKE, note=step.note_tex)
+        fixtures = self.weights[name]
+        grads = self.acts.pop(step.grad.name, None)
+        if grads is None:  # this station's shadows were cleared when we left it
+            grads = {dev: self.build_grad_weight(step.grad, dev, at=self.grid.grad_anchor(dev, slot))
+                     for dev in fixtures}
+            self.play(*[FadeIn(g) for g in grads.values()], run_time=self.rt(0.3))
+        new = {}
+        for dev in fixtures:
+            vis = VGroup(WeightRect(step.out, self.cfg.mesh, device=dev, scale=FIXTURE_SCALE))
+            self.grid.fit_weight(vis, dev, slot)
+            new[dev] = vis
+        self.play(
+            *[g.animate.move_to(fixtures[d].get_center()).set_opacity(0.0) for d, g in grads.items()],
+            *[ReplacementTransform(fixtures[d], new[d]) for d in fixtures],
+            run_time=self.rt(0.9),
+        )
+        for g in grads.values():
+            self.remove(g)
+        self.weights[name] = new
+
     # -------------------------------------------------------------- pipeline
     def handle_P2PSendStep(self, step: P2PSendStep):
         self.op_intro(step, color=style.COMM_COLOR, note=step.note_tex)
@@ -919,3 +951,15 @@ class FiveDDebug(Scene):
         badge.move_to(grid.badge_pos(0))
         self.add(badge, grid.stage_highlight(0))
         self.add(EquationStrip())
+
+
+class Dense4DScene(FiveDScene):
+    """Llama 3 style: FSDP x TP x CP x PP on a dense transformer (16 devices)."""
+
+    cfg = configs.DENSE4D
+
+
+class MoE3DScene(FiveDScene):
+    """DeepSeek-V3 / Kimi K2 style: EP x PP x ZeRO-1 data parallelism, no TP (8 devices)."""
+
+    cfg = configs.MOE3D

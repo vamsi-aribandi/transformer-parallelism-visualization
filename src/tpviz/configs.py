@@ -18,6 +18,16 @@ DP = StrategyConfig(
     wt_sharding={},
 )
 
+ZERO1 = StrategyConfig(
+    name="ZeRO-1 Data Parallelism",
+    short="zero1",
+    tagline="Replicate the weights; shard the optimizer. ReduceScatter, step, AllGather.",
+    mesh=Mesh({"X": 4}),
+    act_sharding={"B": "X"},
+    wt_sharding={},
+    zero1_axis="X",
+)
+
 FSDP = StrategyConfig(
     name="Fully-Sharded Data Parallelism (ZeRO-3)",
     short="fsdp",
@@ -100,4 +110,37 @@ FIVE_D = StrategyConfig(
     axis_roles={"X": "FSDP", "Y": "TP", "C": "CP", "Z": "EP", "stage": "PP"},
 )
 
-ALL = {c.short: c for c in (DP, FSDP, TP, CP, PP, EP, FIVE_D)}
+# ---- recipes from frontier models ---------------------------------------
+# Dense 4D (Llama 3 405B: TP x CP x PP x FSDP; TP 8, CP 16, PP 16, DP 8 at 128K).
+DENSE4D = StrategyConfig(
+    name="Dense 4D Parallelism",
+    short="dense4d",
+    tagline="Llama 3 style: FSDP × TP × CP × PP on a dense transformer.",
+    mesh=Mesh({"X": 2, "Y": 2, "C": 2, "stage": 2}),
+    act_sharding={"B": "X", "T": "C", "D": "Y"},
+    wt_sharding={
+        "W_qkv": {"D": "X", "H": "Y"},
+        "W_o": {"D": "X", "H": "Y"},
+        "W_in": {"D": "X", "F": "Y"},
+        "W_out": {"D": "X", "F": "Y"},
+    },
+    kv_context_axis="C",
+    pipeline=PipelineConfig(n_stages=2, n_microbatches=1, composed=True),
+    axis_roles={"X": "FSDP", "Y": "TP", "C": "CP", "stage": "PP"},
+)
+
+# Open-MoE 3D (DeepSeek-V3: PP 16 x EP 64 x ZeRO-1 DP, no TP; Kimi K2: PP 16 x EP 16 x ZeRO-1).
+MOE3D = StrategyConfig(
+    name="MoE 3D Parallelism",
+    short="moe3d",
+    tagline="DeepSeek-V3 / Kimi K2 style: EP × PP × ZeRO-1 data parallelism, no TP.",
+    mesh=Mesh({"X": 2, "Z": 2, "stage": 2}),
+    act_sharding={"B": "XZ"},
+    wt_sharding={},
+    pipeline=PipelineConfig(n_stages=2, n_microbatches=1, composed=True),
+    moe=MoEConfig(n_experts=2, axis="Z"),
+    axis_roles={"X": "ZeRO-1", "Z": "EP", "stage": "PP"},
+    zero1_axis="X",
+)
+
+ALL = {c.short: c for c in (DP, ZERO1, FSDP, TP, CP, PP, EP, DENSE4D, MOE3D, FIVE_D)}

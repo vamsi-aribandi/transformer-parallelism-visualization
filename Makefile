@@ -42,7 +42,7 @@ lq-train-all:
 
 # ---- interactive web player ----
 web:
-	uv run python -m tpviz.web.export --only dp_train,fsdp_train,tp_train,cp_train,ep_train,pp_train,5d_train
+	uv run python -m tpviz.web.export --only dp_train,zero1_train,fsdp_train,tp_train,cp_train,ep_train,pp_train,dense4d_train,moe3d_train,5d_train
 
 # re-record ONE timeline and merge it into the existing dist/data.json
 # usage: make web-one T=5d_train

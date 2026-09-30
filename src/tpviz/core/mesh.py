@@ -101,3 +101,7 @@ class StrategyConfig:
     # which parallelism each mesh axis implements — the attribution shown on
     # every collective ("AllGather over X · FSDP")
     axis_roles: dict[str, str] = field(default_factory=dict)
+    # ZeRO-1: weights stay replicated over this data axis but gradients
+    # ReduceScatter onto it, each device updates its shard, and the updated
+    # weights AllGather afterwards (an AllReduce split around the optimizer)
+    zero1_axis: str | None = None

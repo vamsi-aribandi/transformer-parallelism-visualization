@@ -27,7 +27,8 @@ DIST = WEB / "dist"
 STRATEGY_LABEL = {
     "dp": "Data Parallelism", "fsdp": "FSDP (ZeRO-3)", "tp": "Tensor Parallelism",
     "cp": "Context Parallelism", "pp": "Pipeline Parallelism", "ep": "Expert Parallelism",
-    "5d": "5D Parallelism",
+    "5d": "5D Parallelism", "zero1": "ZeRO-1 Data Parallelism",
+    "dense4d": "Dense 4D (Llama 3 style)", "moe3d": "MoE 3D (DeepSeek-V3 / Kimi K2 style)",
 }
 
 
@@ -44,10 +45,13 @@ def scene_registry() -> dict[str, tuple[type, object, bool]]:
     from tpviz.scenes.pp_train import PPTrainScene
     from tpviz.scenes.tp import TPScene
     from tpviz.scenes.tp_train import TPTrainScene
+    from tpviz.scenes.zero1 import ZERO1Scene
+    from tpviz.scenes.zero1_train import ZERO1TrainScene
 
     reg = {}
     for short, fwd_cls, train_cls in (
         ("dp", DPScene, DPTrainScene),
+        ("zero1", ZERO1Scene, ZERO1TrainScene),
         ("fsdp", FSDPScene, FSDPTrainScene),
         ("tp", TPScene, TPTrainScene),
         ("cp", CPScene, CPTrainScene),
@@ -57,9 +61,11 @@ def scene_registry() -> dict[str, tuple[type, object, bool]]:
         cfg = getattr(configs, short.upper())
         reg[f"{short}_fwd"] = (fwd_cls, cfg, False)
         reg[f"{short}_train"] = (train_cls, cfg, True)
-    from tpviz.scenes.five_d import FiveDScene
+    from tpviz.scenes.five_d import Dense4DScene, FiveDScene, MoE3DScene
 
     reg["5d_train"] = (FiveDScene, configs.FIVE_D, True)
+    reg["dense4d_train"] = (Dense4DScene, configs.DENSE4D, True)
+    reg["moe3d_train"] = (MoE3DScene, configs.MOE3D, True)
     return reg
 
 

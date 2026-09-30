@@ -14,6 +14,8 @@ import re
 _CMD = re.compile(r"\\(text|mathrm|mathit)\{")
 _SIMPLE = {
     r"\to": " → ",
+    r"\leftarrow": " ← ",
+    r"\eta": "η",
     r"\cdot": "·",
     r"\partial": "∂",
     r"\Rightarrow": " ⇒ ",

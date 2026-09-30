@@ -145,6 +145,10 @@ body.tpv-page {
   font-family: var(--sans); font-size: 24px; font-weight: 650;
   letter-spacing: -0.01em; margin: 52px 0 14px;
 }
+.tpv-page h3 {
+  font-family: var(--sans); font-size: 19px; font-weight: 650;
+  letter-spacing: -0.005em; margin: 40px 0 12px;
+}
 .tpv-page p { margin: 0 0 18px; }
 .tpv-page a { color: var(--accent); text-decoration-color: color-mix(in srgb, var(--accent) 40%, transparent); }
 .tpv-page a:hover { text-decoration-color: var(--accent); }

@@ -204,3 +204,17 @@ class AttentionBwdStep(Step):
             rf"\text{{Attn}}^\top({self.da.tex()})"
             rf" \,\to\, {self.dq.tex()},\ {self.dk.tex()},\ {self.dv.tex()}"
         )
+
+
+@dataclass(kw_only=True)
+class OptimizerStep(Step):
+    """ZeRO-1: the optimizer state is sharded over the data axis, so each
+    device updates only ITS slice of the weight from its slice of the gradient
+    (the gradient was ReduceScattered, not AllReduced)."""
+
+    weight: LTensor  # the replicated weight W[D, F]
+    grad: LTensor  # its ReduceScattered gradient dW[D_X, F]
+    out: LTensor  # the updated shard W[D_X, F]
+
+    def tex(self) -> str:
+        return rf"{self.out.tex()} \leftarrow {self.weight.tex()} - \eta\, {self.grad.tex()}"

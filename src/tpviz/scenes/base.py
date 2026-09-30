@@ -454,7 +454,8 @@ class ForwardPassScene(Scene):
             slot = 0 if step.src.name in ("W_qkv", "W_in") else 1
             wkey = (key, step.src.name)
             shards = self.weights[wkey]
-            self.pending_restore[wkey] = [s.copy() for s in shards]
+            if step.jit:
+                self.pending_restore[wkey] = [s.copy() for s in shards]
             results = []
             for i in range(len(shards)):
                 vis = WeightRect(step.out, self.cfg.mesh, device=i, scale=FIXTURE_SCALE)
@@ -468,6 +469,8 @@ class ForwardPassScene(Scene):
             )
             coll.animate_all_gather(self, shards, results, run_time=self.rt(1.4))
             self.weights[wkey] = results
+            if not step.jit:  # ZeRO-1's post-update gather: the weight is whole again
+                self.set_tracker(step.out, self.canvas.weight_anchor(key, slot, 0)[0], run_time=0.2)
         else:
             shards = self.acts.pop(step.src.name)
             results = [

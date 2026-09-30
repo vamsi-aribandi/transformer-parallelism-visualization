@@ -32,6 +32,7 @@ from tpviz.core.steps import (
     GradInitStep,
     MatMulStep,
     MergeQKVStep,
+    OptimizerStep,
     P2PSendStep,
     ReduceScatterStep,
     SaveActivationStep,
@@ -182,10 +183,16 @@ def _tag_collective_notes(steps: list[Step], rec: LayerRecord, cfg: StrategyConf
         elif isinstance(st, ReduceScatterStep):
             if st.src.name.startswith("dW"):
                 w = make_weight(cfg, st.src.name[1:])
-                st.note_tex = (
-                    rf"\text{{forward kept}}\ {w.tex()}\ "
-                    rf"\text{{sharded --- its gradient scatters back to the same shards}}"
-                )
+                if st.axis in w.axes_of(st.scatter_dim):
+                    st.note_tex = (
+                        rf"\text{{forward kept}}\ {w.tex()}\ "
+                        rf"\text{{sharded --- its gradient scatters back to the same shards}}"
+                    )
+                else:
+                    st.note_tex = (
+                        rf"\text{{ZeRO-1: }}{w.tex()}\ \text{{is replicated, but each device keeps}}"
+                        rf"\ \text{{only a shard of the gradient and optimizer state}}"
+                    )
             else:
                 base = st.src.name[1:] if st.src.name.startswith("d") else None
                 fwd = find(AllGatherStep, axis=st.axis, phase=st.phase,
@@ -215,6 +222,13 @@ def _wt_scatter(cfg: StrategyConfig, name: str) -> dict:
     sharding = cfg.wt_sharding.get(name, {})
     for dim, axes in sharding.items():
         return {"scatter_dim": dim, "scatter_axis": axes[0]}
+    if cfg.zero1_axis is not None:
+        # ZeRO-1: the weight is replicated, but its gradient still scatters
+        # (onto the first dim the expert axis doesn't already own) so that
+        # only a shard of the optimizer state lives on each device
+        w = make_weight(cfg, name)
+        dim = next(d for d in w.dims if not w.axes_of(d))
+        return {"scatter_dim": dim, "scatter_axis": cfg.zero1_axis}
     return {"scatter_dim": None}
 
 
@@ -454,6 +468,40 @@ def train_steps(cfg: StrategyConfig) -> list[Step]:
         steps += s
         s, d_out = backward_attention(cfg, rec, dx, layer)
         steps += s
+    steps += update_steps(cfg)
+    return steps
+
+
+def update_steps(cfg: StrategyConfig) -> list[Step]:
+    """ZeRO-1's second half: every device applies the optimizer to its shard of
+    each weight, then the updated shards AllGather so the weights are whole
+    (and replicated) again for the next step."""
+    if cfg.zero1_axis is None:
+        return []
+    axis = cfg.zero1_axis
+    phases = ("attn", "moe" if cfg.moe is not None else "mlp")
+    steps: list[Step] = []
+    for layer in range(1, cfg.n_layers + 1):
+        for phase in phases:
+            for name in (("W_qkv", "W_o") if phase == "attn" else ("W_in", "W_out")):
+                w = make_weight(cfg, name)
+                if axis in "".join(w.sharding.values()):
+                    continue  # already sharded over the data axis (FSDP-style)
+                dim = next(d for d in w.dims if not w.axes_of(d))
+                shard = replace(w, sharding={**w.sharding, dim: axis})
+                grad = replace(shard, name=f"d{name}", kind="grad")
+                steps.append(OptimizerStep(
+                    weight=w, grad=grad, out=shard, layer=layer, phase=phase, backward=True,
+                    caption="ZeRO-1: each device updates only its shard of the weight from "
+                            "its shard of the gradient and optimizer state",
+                ))
+                steps.append(AllGatherStep(
+                    src=shard, out=w, axis=axis, dim=dim, layer=layer, phase=phase,
+                    backward=True,
+                    caption="The updated shards gather: with the ReduceScatter before the "
+                            "optimizer step, this is an AllReduce split in two",
+                    note_tex=r"\text{ReduceScatter} + \text{AllGather} = \text{AllReduce}",
+                ))
     return steps
 
 

@@ -31,6 +31,7 @@ from tpviz.core.steps import (
     GradInitStep,
     MatMulStep,
     MergeQKVStep,
+    OptimizerStep,
     SaveActivationStep,
     Step,
 )
@@ -74,6 +75,7 @@ class TrainScene(ForwardPassScene):
         self.matmul_count = 0
         self.acts, self.weights, self.pending_restore = {}, {}, {}
         self.stash: dict[tuple[str, str], list[VGroup]] = {}  # (station, tensor name)
+        self.dw_shadows: dict[tuple[str, str], list[VGroup]] = {}  # (station, weight name)
         self.caption_mobj = self.badge = self.tracker = self.highlight = None
         self.cur_station = None
         self._saved_note_shown = False
@@ -144,9 +146,10 @@ class TrainScene(ForwardPassScene):
             anims.append(FadeIn(hl))
         else:
             anims.append(self.highlight.animate.move_to(hl.get_center()))
-        # gradients arrive from the RIGHT (weight-grad shadows stay at their weights)
+        # gradients arrive from the RIGHT (weight-grad shadows stay at their weights);
+        # the optimizer-step revisits after the backward move nothing
         for name, vis_list in self.acts.items():
-            if name.startswith("dW"):
+            if name.startswith("dW") or isinstance(step, OptimizerStep):
                 continue
             for i, g in enumerate(vis_list):
                 anims.append(g.animate.move_to(self.canvas.anchor(key, "exit", i)))
@@ -273,12 +276,54 @@ class TrainScene(ForwardPassScene):
         anims += [FadeIn(o, shift=DOWN * 0.1) for o in outs]
         self.play(*anims, run_time=self.rt(1.0))
         self.acts[step.out.name] = outs
+        self.dw_shadows[(key, w_name)] = outs
+
+    def _exchange(self, step):
+        super()._exchange(step)
+        if step.out.name.startswith("dW"):
+            # both layers' gradients share a tensor name; the optimizer step
+            # (ZeRO-1) needs THIS station's shadows
+            key = self.canvas.station_key(step.layer, step.phase)
+            self.dw_shadows[(key, step.out.name[1:])] = self.acts[step.out.name]
 
     def handle_AllGatherStep(self, step):
         if step.backward and step.src.kind == "kv":
             self._kv_regather(step)
             return
         super().handle_AllGatherStep(step)
+        if step.src.kind == "weight" and not step.jit:
+            # ZeRO-1's post-update gather is permanent: nothing to restore
+            key = self.canvas.station_key(step.layer, step.phase)
+            self.pending_restore.pop((key, step.src.name), None)
+
+    def handle_OptimizerStep(self, step: OptimizerStep):
+        """ZeRO-1: each lane's gradient shard updates ITS slice of the weight —
+        the replicated fixture becomes a sharded one (ghost + solid slice)."""
+        key = self.canvas.station_key(step.layer, step.phase)
+        name = step.weight.name
+        slot = 0 if name in ("W_qkv", "W_in") else 1
+        fixtures = self.weights[(key, name)]
+        grads = self.dw_shadows.pop((key, name), [])
+        if self.acts.get(step.grad.name) is grads:
+            del self.acts[step.grad.name]
+        new = []
+        for i in range(self.n_lanes()):
+            vis = WeightRect(step.out, self.cfg.mesh, device=i, scale=FIXTURE_SCALE)
+            self.canvas.fit_weight(VGroup(vis), key, slot, i)
+            new.append(vis)
+        self.play(
+            self.strip.show(step.tex(), color=style.GRAD_STROKE, note=step.note_tex),
+            run_time=self.rt(0.4),
+        )
+        self.play(
+            *[g.animate.move_to(fixtures[i].get_center()).set_opacity(0.0) for i, g in enumerate(grads)],
+            *[ReplacementTransform(fixtures[i], new[i]) for i in range(len(fixtures))],
+            run_time=self.rt(0.9),
+        )
+        for g in grads:
+            self.remove(g)
+        self.weights[(key, name)] = new
+        self.set_tracker(step.out, self.canvas.weight_anchor(key, slot, 0)[0], run_time=0.2)
 
     def _kv_regather(self, step):
         """CP backward: the saved K/V SHARDS re-gather into full-sequence decks
